@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+GitPython
+python-multipart
+google-auth
+google-auth-oauthlib
+requests
+python-dotenv
+PyPDF2
+python-docx
+google-cloud-aiplatform
+jinja2
+PyJWT
+cryptography
+google-cloud-firestore

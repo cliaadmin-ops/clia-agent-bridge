@@ -1,0 +1,360 @@
+import os
+import json
+import time
+import PyPDF2
+import docx
+import vertexai
+from vertexai.generative_models import GenerativeModel, Part
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Header, Request, Form
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+from typing import Dict, Any, Optional, List
+from git_ops import GitOps
+from history import ChatHistoryManager
+from dotenv import load_dotenv
+
+load_dotenv()
+
+app = FastAPI(title="CLIA Agent Bridge")
+chat_manager = ChatHistoryManager()
+
+# Configuration (In production, these come from Secret Manager)
+REPO_PATH = os.getenv("REPO_PATH", "/tmp/clia-website")
+REMOTE_URL = "https://github.com/cliaadmin-ops/clia-website.git"
+
+# Auth Configuration
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") # Legacy/Fallback
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID")
+GITHUB_INSTALLATION_ID = os.getenv("GITHUB_INSTALLATION_ID")
+GITHUB_PRIVATE_KEY = os.getenv("GITHUB_PRIVATE_KEY")
+
+if GITHUB_PRIVATE_KEY:
+    # Handle potential newline issues in env vars
+    GITHUB_PRIVATE_KEY = GITHUB_PRIVATE_KEY.replace("\\n", "\n")
+
+git_ops = GitOps(
+    REPO_PATH, 
+    REMOTE_URL, 
+    app_id=GITHUB_APP_ID, 
+    private_key=GITHUB_PRIVATE_KEY, 
+    installation_id=GITHUB_INSTALLATION_ID,
+    token=GITHUB_TOKEN
+)
+
+# Simple in-memory lock for concurrent edits (Note: This only works per-instance)
+# For multi-instance Cloud Run, we'd use Firestore or GCS.
+AGENT_LOCK = {"locked": False, "user": None, "timestamp": 0}
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+
+# Initialize Vertex AI
+# We will force the project ID to clia-web-prod to match the IAM settings
+PROJECT_ID = "clia-web-prod"
+LOCATION = "us-central1"
+vertexai.init(project=PROJECT_ID, location=LOCATION)
+print(f"DEBUG: Vertex AI initialized for project: {PROJECT_ID} in {LOCATION}")
+
+def get_gemini_response(prompt: str, model_name: str = "gemini-3.1-flash-lite", contents: list = None) -> str:
+    try:
+        model = GenerativeModel(model_name)
+        if contents:
+            # contents is a list of parts (text, PDF, etc.)
+            response = model.generate_content(contents)
+        else:
+            response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        error_msg = f"Vertex AI Error ({model_name}): {str(e)}"
+        print(error_msg)
+        return f"ERROR: {error_msg}"
+
+def parse_document(file: UploadFile) -> bytes:
+    """Returns the raw bytes of the document for Gemini 3 native processing."""
+    try:
+        content = file.file.read()
+        file.file.seek(0)
+        return content
+    except Exception as e:
+        print(f"Error reading document: {e}")
+        return b""
+
+async def get_iap_user(x_goog_authenticated_user_email: Optional[str] = Header(None)):
+    if not x_goog_authenticated_user_email:
+        # In local development, we might not have this header
+        if os.getenv("ENV") == "dev":
+            return "dev-user@canadaragolake.com"
+        raise HTTPException(status_code=401, detail="Missing IAP authentication header")
+    # IAP header format is 'accounts.google.com:user@email.com'
+    return x_goog_authenticated_user_email.split(":")[-1]
+
+class UpdateRequest(BaseModel):
+    target: str  # e.g., "board", "species"
+    data: Any
+    message: str
+
+@app.get("/health")
+def health_check():
+    """Non-blocking health check endpoint."""
+    return {
+        "status": "healthy",
+        "repo_initialized": os.path.exists(REPO_PATH),
+        "timestamp": time.time()
+    }
+
+@app.get("/")
+def read_root(user: str = Depends(get_iap_user)):
+    return {"status": "CLIA Agent Bridge Active", "user": user}
+
+@app.get("/agent", response_class=HTMLResponse)
+async def get_agent_ui(request: Request, user: str = Depends(get_iap_user)):
+    return templates.TemplateResponse(
+        request=request, name="index.html", context={"user": user}
+    )
+
+@app.post("/agent/chat")
+async def chat_endpoint(
+    request: Request,
+    message: str = Form(...),
+    file: Optional[UploadFile] = File(None),
+    user: str = Depends(get_iap_user)
+):
+    global AGENT_LOCK
+    # Check lock (expire after 10 mins)
+    if AGENT_LOCK["locked"] and AGENT_LOCK["user"] != user and (time.time() - AGENT_LOCK["timestamp"]) < 600:
+        return HTMLResponse(content=f"""
+        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-yellow-50 border border-yellow-200">
+            <p class="text-sm text-yellow-800"><b>Agent Busy:</b> {AGENT_LOCK['user']} is currently staging an update. Please try again in a few minutes.</p>
+        </div>
+        """)
+
+    # Retrieve persistent chat history
+    history = await chat_manager.get_recent_messages(user, limit=10)
+    history_context = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+
+    doc_bytes = None
+    if file and file.filename:
+        doc_bytes = parse_document(file)
+    
+    # Save user message to history
+    await chat_manager.save_message(user, "user", message)
+
+    # 1. Triage & Complexity ID (Gemini 3.1 Flash Lite)
+    print(f"DEBUG: Starting triage for user {user}")
+    triage_prompt = f"""
+    Analyze the user's request and return a JSON object with:
+    - "intent": "READ" or "WRITE"
+    - "complexity": 1-10 (1=Simple query, 5=Standard update, 10=Complex reasoning/synthesis)
+    - "target": "board", "species", or "general"
+    
+    Recent Conversation:
+    {history_context}
+
+    User Message: {message}
+    Has Document: {bool(doc_bytes)}
+    """
+    # Using the designated Triage model (Gemini 3.1 Flash Lite)
+    triage_raw = get_gemini_response(triage_prompt, "gemini-3.1-flash-lite")
+    print(f"DEBUG: Triage raw response: {triage_raw}")
+    try:
+        triage_json = json.loads(triage_raw.strip('`').replace('json\n', ''))
+        intent = triage_json.get("intent", "READ")
+        complexity = triage_json.get("complexity", 1)
+    except:
+        intent = "READ"
+        complexity = 1
+
+    # 2. Dynamic Model Routing (Ability vs. Cost Optimization)
+    if complexity <= 3:
+        model_to_use = "gemini-3.1-flash-lite"
+    elif complexity <= 7:
+        model_to_use = "gemini-3-flash-preview"
+    else:
+        model_to_use = "gemini-3.1-pro-preview"
+    
+    if intent == "WRITE" or doc_bytes:
+        # Acquire Lock
+        AGENT_LOCK["locked"] = True
+        AGENT_LOCK["user"] = user
+        AGENT_LOCK["timestamp"] = time.time()
+
+        # Extraction & Staging Logic
+        extraction_parts = [
+            Part.from_text(f"""
+            You are the CLIA Website Agent. 
+            Target: {triage_json.get('target', 'general')}
+            
+            Recent Conversation:
+            {history_context}
+
+            User Message: {message}
+            
+            Analyze the request and provide a summary of the proposed changes.
+            """)
+        ]
+        
+        if doc_bytes and file.filename.endswith(".pdf"):
+            extraction_parts.append(Part.from_data(data=doc_bytes, mime_type="application/pdf"))
+        elif doc_bytes:
+            # Fallback for non-PDF files (treat as text if possible)
+            try:
+                extraction_parts.append(Part.from_text(f"Document Content: {doc_bytes.decode('utf-8')}"))
+            except:
+                pass
+
+        extraction_result = get_gemini_response("", model_to_use, contents=extraction_parts)
+        
+        # Save agent response to history
+        await chat_manager.save_message(user, "assistant", f"STAGING UPDATE: {extraction_result}")
+        
+        branch_name = f"update-request-{int(time.time())}"
+        
+        response_html = f"""
+        <div class="message-user p-3 rounded-lg max-w-[80%]">
+            {message}
+            {"<br><i class='text-xs'>(File attached: " + file.filename + ")</i>" if file and file.filename else ""}
+        </div>
+        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
+            <div class="flex justify-between items-start mb-2">
+                <h3 class="font-bold text-blue-800">Staging Update</h3>
+                <span class="text-[10px] bg-blue-200 text-blue-800 px-1 rounded uppercase font-bold">
+                    {model_to_use} (C{complexity})
+                </span>
+            </div>
+            <p class="text-sm mb-4">I've analyzed your request. I'm ready to stage these changes to the <b>Dev Site</b>.</p>
+            
+            <div class="bg-white p-3 rounded border border-gray-300 mb-4 text-xs font-mono whitespace-pre-wrap">
+{extraction_result}
+            </div>
+
+            <div class="flex space-x-2">
+                <button hx-post="/agent/approve?branch={branch_name}" 
+                        hx-target="closest .message-agent" 
+                        hx-swap="outerHTML"
+                        class="bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">
+                    Approve & Publish
+                </button>
+                <button hx-post="/agent/discard"
+                        hx-target="closest .message-agent"
+                        hx-swap="outerHTML"
+                        class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">
+                    Discard
+                </button>
+                <a href="{git_ops.get_dev_url()}" target="_blank" class="text-blue-600 text-xs underline py-1">Preview on Dev Site</a>
+            </div>
+        </div>
+        """
+    else:
+        # READ Logic
+        manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
+        # ... (context loading logic)
+        context = "Current Website Data:\n"
+        if os.path.exists(manifest_path):
+            with open(manifest_path, 'r') as f:
+                manifest = json.load(f)
+            for target, info in manifest["editable_content"].items():
+                file_path = os.path.join(REPO_PATH, "public", info["path"].lstrip("/"))
+                if os.path.exists(file_path):
+                    with open(file_path, 'r') as f:
+                        data = json.load(f)
+                        context += f"\n{target.upper()}:\n{json.dumps(data, indent=2)}\n"
+        
+        query_prompt = f"{context}\n\nRecent Conversation:\n{history_context}\n\nUser Question: {message}\n\nProvide a concise answer."
+        answer = get_gemini_response(query_prompt, model_to_use)
+        
+        # Save agent response to history
+        await chat_manager.save_message(user, "assistant", answer)
+        
+        response_html = f"""
+        <div class="message-user p-3 rounded-lg max-w-[80%]">
+            {message}
+        </div>
+        <div class="message-agent p-3 rounded-lg max-w-[80%]">
+            <div class="text-[10px] text-gray-400 mb-1 uppercase font-bold">{model_to_use} (C{complexity})</div>
+            {answer}
+        </div>
+        """
+    
+    return HTMLResponse(content=response_html)
+
+@app.post("/agent/update")
+async def update_content(request: UpdateRequest, user: str = Depends(get_iap_user)):
+    try:
+        # Log the user making the change
+        print(f"User {user} is updating {request.target}")
+        
+        # 1. Sync and Branch
+        git_ops.sync_main()
+        branch_name = git_ops.create_content_branch(request.target)
+
+        # 2. Update File
+        # Map target to path using site-manifest.json logic
+        manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
+        with open(manifest_path, 'r') as f:
+            manifest = json.load(f)
+        
+        if request.target not in manifest["editable_content"]:
+            raise HTTPException(status_code=400, detail=f"Invalid target: {request.target}")
+        
+        relative_path = manifest["editable_content"][request.target]["path"]
+        # Remove leading slash for os.path.join
+        file_path = os.path.join(REPO_PATH, "public", relative_path.lstrip("/"))
+        
+        with open(file_path, 'w') as f:
+            json.dump(request.data, f, indent=2)
+
+        # 3. Commit and Push
+        git_ops.commit_and_push(request.message)
+
+        return {
+            "status": "success",
+            "branch": branch_name,
+            "dev_url": git_ops.get_dev_url(),
+            "message": f"Changes staged on branch {branch_name}. Please review at the Dev URL."
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/agent/approve")
+async def approve_update(branch: str, user: str = Depends(get_iap_user)):
+    global AGENT_LOCK
+    try:
+        print(f"User {user} is approving branch {branch}")
+        # git_ops.merge_to_main(branch) # Commented out for safety during dev
+        
+        # Release Lock
+        AGENT_LOCK["locked"] = False
+        
+        return HTMLResponse(content=f"""
+        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-green-50 border border-green-200">
+            <h3 class="font-bold text-green-800 mb-1">Simulation Success!</h3>
+            <p class="text-sm italic text-green-700">"If I could write to the files yet, this is where I'd say <b>SUCCESS!</b>"</p>
+            <p class="text-xs mt-2 text-gray-500">Branch <b>{branch}</b> (simulated) is ready for the next phase of autonomy.</p>
+            <button hx-post="/agent/revert" hx-target="closest .message-agent" class="mt-2 text-[10px] text-red-600 underline">Undo (Revert Main)</button>
+        </div>
+        """)
+    except Exception as e:
+        return HTMLResponse(content=f"<div class='text-red-600'>Error: {str(e)}</div>")
+
+@app.post("/agent/discard")
+async def discard_update(user: str = Depends(get_iap_user)):
+    global AGENT_LOCK
+    AGENT_LOCK["locked"] = False
+    return HTMLResponse(content="<div class='text-gray-500 text-xs italic'>Update discarded. Agent unlocked.</div>")
+
+@app.post("/agent/revert")
+async def revert_update(user: str = Depends(get_iap_user)):
+    try:
+        new_sha = git_ops.revert_main()
+        return HTMLResponse(content=f"""
+        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-orange-50 border border-orange-200">
+            <p class="text-sm text-orange-800"><b>Reverted:</b> The last change to the live site has been undone.</p>
+            <p class="text-[10px] text-gray-500">New HEAD: {new_sha[:7]}</p>
+        </div>
+        """)
+    except Exception as e:
+        return HTMLResponse(content=f"<div class='text-red-600'>Revert failed: {str(e)}</div>")
