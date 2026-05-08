@@ -58,7 +58,7 @@ LOCATION = "us-central1"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
 print(f"DEBUG: Vertex AI initialized for project: {PROJECT_ID} in {LOCATION}")
 
-def get_gemini_response(prompt: str, model_name: str = "gemini-3.1-flash-lite", contents: list = None) -> str:
+def get_gemini_response(prompt: str, model_name: str = "gemini-1.5-flash", contents: list = None) -> str:
     try:
         model = GenerativeModel(model_name)
         if contents:
@@ -104,6 +104,12 @@ def health_check():
         "repo_initialized": os.path.exists(REPO_PATH),
         "timestamp": time.time()
     }
+
+@app.get("/hello")
+async def hello_vertex():
+    """Test endpoint to verify Vertex AI connectivity."""
+    response = get_gemini_response("Say hello from the CLIA Agent Bridge!")
+    return {"response": response, "project": PROJECT_ID, "location": LOCATION}
 
 @app.get("/")
 def read_root(user: str = Depends(get_iap_user)):
@@ -156,8 +162,8 @@ async def chat_endpoint(
     User Message: {message}
     Has Document: {bool(doc_bytes)}
     """
-    # Using the designated Triage model (Gemini 3.1 Flash Lite)
-    triage_raw = get_gemini_response(triage_prompt, "gemini-3.1-flash-lite")
+    # Using the designated Triage model (Gemini 1.5 Flash)
+    triage_raw = get_gemini_response(triage_prompt, "gemini-1.5-flash")
     print(f"DEBUG: Triage raw response: {triage_raw}")
     try:
         triage_json = json.loads(triage_raw.strip('`').replace('json\n', ''))
@@ -169,11 +175,11 @@ async def chat_endpoint(
 
     # 2. Dynamic Model Routing (Ability vs. Cost Optimization)
     if complexity <= 3:
-        model_to_use = "gemini-3.1-flash-lite"
+        model_to_use = "gemini-1.5-flash"
     elif complexity <= 7:
-        model_to_use = "gemini-3-flash-preview"
+        model_to_use = "gemini-1.5-flash"
     else:
-        model_to_use = "gemini-3.1-pro-preview"
+        model_to_use = "gemini-1.5-pro"
     
     if intent == "WRITE" or doc_bytes:
         # Acquire Lock
