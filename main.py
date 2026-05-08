@@ -108,7 +108,7 @@ def health_check():
 @app.get("/hello")
 async def hello_vertex():
     """Test endpoint to verify Vertex AI connectivity."""
-    response = get_gemini_response("Say hello from the CLIA Agent Bridge!")
+    response = get_gemini_response("Say hello from the CLIA Agent Bridge!", "gemini-3.1-flash-lite")
     return {"response": response, "project": PROJECT_ID, "location": LOCATION}
 
 @app.get("/")
