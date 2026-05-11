@@ -329,7 +329,19 @@ async def confirm_stage(message_id: str = Form(...), file: str = Form(...), summ
         full_path = os.path.join(REPO_PATH, file)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, 'w', encoding='utf-8') as f: f.write(content)
-        git_ops.commit_and_push(f"Agent Update: {summary} (Requested by {user})")
+        pushed = git_ops.commit_and_push(f"Agent Update: {summary} (Requested by {user})")
+        
+        if not pushed:
+            error_html = f"""
+            <div class="message-agent p-3 rounded-lg max-w-[80%] bg-red-50 border border-red-200">
+                <h3 class="font-bold text-red-800">Staging Failed</h3>
+                <p class="text-sm">No changes were detected between your request and the current site content. This usually means the update has already been applied or the generated content was identical to the original.</p>
+                <button hx-post="/agent/unlock" hx-target="closest .message-agent" hx-swap="outerHTML" class="mt-2 bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Reset Agent</button>
+            </div>
+            """
+            await chat_manager.update_message(message_id, error_html)
+            return HTMLResponse(content=error_html)
+
         final_html = f"""
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
             <h3 class="font-bold text-blue-800">Staged on Dev Site</h3>

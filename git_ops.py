@@ -66,10 +66,11 @@ class GitOps:
     def commit_and_push(self, message):
         """
         Commits changes to the feature branch and merges it into 'dev'.
+        Returns True if changes were pushed, False otherwise.
         """
         if not self.repo.is_dirty(untracked_files=True):
             print("DEBUG: No changes detected. Skipping commit.")
-            return
+            return False
 
         try:
             self.repo.remotes.origin.set_url(self._get_authenticated_url())
@@ -96,10 +97,11 @@ class GitOps:
             except GitCommandError:
                 # Fallback: Force dev to match the feature branch exactly
                 self.repo.git.push('origin', f"{current_branch}:dev", force=True)
-                return
+                return True
                 
             self.repo.remotes.origin.push()
             self.repo.git.checkout(current_branch)
+            return True
         except Exception as e:
             print(f"DEBUG: Git push FAILED: {str(e)}")
             raise e
