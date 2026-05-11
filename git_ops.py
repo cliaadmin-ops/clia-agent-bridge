@@ -77,8 +77,10 @@ class GitOps:
         Commits changes to the feature branch and merges it into 'dev'.
         Returns True if changes were pushed, False otherwise.
         """
-        if not self.repo.is_dirty(untracked_files=True):
-            print("DEBUG: No changes detected. Skipping commit.")
+        is_dirty = self.repo.is_dirty(untracked_files=True)
+        print(f"DEBUG: commit_and_push - is_dirty: {is_dirty}")
+        if not is_dirty:
+            print(f"DEBUG: No changes detected in {self.repo_path}. Status: {self.repo.git.status()}")
             return False
 
         try:

@@ -336,12 +336,16 @@ async def confirm_stage(
     try:
         # Decode the content
         content = base64.b64decode(content_b64).decode('utf-8')
+        print(f"DEBUG: confirm_stage - User: {user}, File: {file}, Content Length: {len(content)}")
         
         git_ops.sync_main()
         branch_name = git_ops.create_content_branch(f"update-{int(time.time())}")
-        full_path = os.path.join(REPO_PATH, file)
+        full_path = os.path.normpath(os.path.join(REPO_PATH, file))
+        print(f"DEBUG: confirm_stage - Full Path: {full_path}")
+        
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, 'w', encoding='utf-8') as f: f.write(content)
+        
         pushed = git_ops.commit_and_push(f"Agent Update: {summary} (Requested by {user})")
         
         if not pushed:
