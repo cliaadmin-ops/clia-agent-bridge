@@ -323,7 +323,9 @@ async def chat_endpoint(
                 git_ops.commit_and_push(f"Agent Update: {extraction_result} (Requested by {user})")
                 print(f"DEBUG: Push successful to branch {branch_name}")
             else:
-                # ... (error handling)
+                print("DEBUG: ERROR: Gemini failed to generate new content field.")
+                extraction_result = "ERROR: Gemini failed to generate new content field."
+                branch_name = "error"
 
         except Exception as e:
             print(f"DEBUG: ERROR parsing staging plan: {str(e)}")
