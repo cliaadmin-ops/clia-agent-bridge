@@ -60,10 +60,16 @@ class GitOps:
     def _get_repo(self):
         auth_url = self._get_authenticated_url()
         if not os.path.exists(self.repo_path):
-            return Repo.clone_from(auth_url, self.repo_path)
-        repo = Repo(self.repo_path)
-        # Update remote URL in case token changed
-        repo.remotes.origin.set_url(auth_url)
+            repo = Repo.clone_from(auth_url, self.repo_path)
+        else:
+            repo = Repo(self.repo_path)
+            repo.remotes.origin.set_url(auth_url)
+        
+        # Configure Git identity
+        with repo.config_writer() as cw:
+            cw.set_value("user", "name", "CLIA Agent")
+            cw.set_value("user", "email", "agent@canadaragolake.com")
+            
         return repo
 
     def sync_main(self):
@@ -79,14 +85,19 @@ class GitOps:
         return branch_name
 
     def commit_and_push(self, message):
-        self.repo.remotes.origin.set_url(self._get_authenticated_url())
-        self.repo.git.add(A=True)
-        self.repo.index.commit(message)
-        origin = self.repo.remote(name='origin')
-        # Push the feature branch for history
-        origin.push(self.repo.active_branch)
-        # Force push to 'dev' branch to trigger the preview deployment
-        self.repo.git.push('origin', f"{self.repo.active_branch.name}:dev", force=True)
+        try:
+            self.repo.remotes.origin.set_url(self._get_authenticated_url())
+            self.repo.git.add(A=True)
+            self.repo.index.commit(message)
+            origin = self.repo.remote(name='origin')
+            # Push the feature branch for history
+            origin.push(self.repo.active_branch)
+            # Force push to 'dev' branch to trigger the preview deployment
+            self.repo.git.push('origin', f"{self.repo.active_branch.name}:dev", force=True)
+            print(f"DEBUG: Git push successful: {message}")
+        except Exception as e:
+            print(f"DEBUG: Git push FAILED: {str(e)}")
+            raise e
 
     def merge_to_main(self, branch_name):
         self.repo.remotes.origin.set_url(self._get_authenticated_url())
