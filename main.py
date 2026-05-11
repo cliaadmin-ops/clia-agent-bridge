@@ -200,22 +200,30 @@ async def chat_endpoint(
         # Extraction & Staging Logic
         staging_model = "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
         
-        # 1. Identify the target file
-        files_list = []
+        # 1. Identify the target file by content
+        files_content = {}
         for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
             for f in files:
-                rel_path = os.path.relpath(os.path.join(root, f), REPO_PATH)
-                files_list.append(rel_path)
+                if f.endswith(".html"):
+                    rel_path = os.path.relpath(os.path.join(root, f), REPO_PATH)
+                    with open(os.path.join(root, f), 'r', encoding='utf-8') as file:
+                        files_content[rel_path] = file.read(2000) # Read first 2000 chars
         
         identify_prompt = f"""
-        Identify which file in this list most likely contains the content the user wants to change.
+        You are the CLIA Website Agent.
         User Request: {message}
-        Files: {json.dumps(files_list)}
-        Return ONLY the file path.
+        
+        Available Files and their content snippets:
+        {json.dumps(files_content, indent=2)}
+        
+        TASK:
+        1. Find the file that contains the section "What CLIA does".
+        2. Return ONLY the file path of that file.
         """
         print(f"DEBUG: Identify prompt sent for request: {message}")
         file_to_change = get_gemini_response(identify_prompt, "gemini-3.1-flash-lite").strip().strip("'").strip('"')
         print(f"DEBUG: File identified: {file_to_change}")
+
         
         if file_to_change not in files_list:
             print(f"DEBUG: Identified file {file_to_change} not in list. Falling back to public/index.html")
