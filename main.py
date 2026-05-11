@@ -471,3 +471,8 @@ async def revert_update(user: str = Depends(get_iap_user)):
         """)
     except Exception as e:
         return HTMLResponse(content=f"<div class='text-red-600'>Revert failed: {str(e)}</div>")
+
+@app.post("/agent/clear")
+async def clear_chat_history(user: str = Depends(get_iap_user)):
+    await chat_manager.clear_history(user)
+    return {"status": "success", "message": "Chat history cleared."}

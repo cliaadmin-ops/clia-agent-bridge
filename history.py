@@ -57,3 +57,14 @@ class ChatHistoryManager:
         except Exception as e:
             print(f"Error retrieving from Firestore: {e}")
             return []
+
+    async def clear_history(self, user_email: str):
+        """Deletes all messages for a user."""
+        try:
+            query = self.collection.where("user_email", "==", user_email)
+            docs = await query.get()
+            for doc in docs:
+                await doc.reference.delete()
+            print(f"DEBUG: Cleared history for {user_email}")
+        except Exception as e:
+            print(f"Error clearing history: {e}")
