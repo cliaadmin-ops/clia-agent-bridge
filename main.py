@@ -325,9 +325,17 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                         </div>
 
                         <div class="flex flex-col space-y-3">
-                            <a href="{git_ops.get_dev_url()}" target="_blank" class="bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">
-                                Step 1: Verify on Dev Site
-                            </a>
+                            <div class="flex items-center space-x-2">
+                                <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">
+                                    Step 1: Verify on Dev Site
+                                </a>
+                                <div id="dev-deploy-status" 
+                                     hx-get="/agent/deploy-status?branch=dev" 
+                                     hx-trigger="load, every 10s"
+                                     class="text-[10px] font-bold uppercase px-2 py-1 rounded bg-gray-100 text-gray-500">
+                                    Checking...
+                                </div>
+                            </div>
                             
                             <div class="border-t border-blue-200 pt-3">
                                 <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
@@ -451,6 +459,46 @@ async def chat_endpoint(
     </div>
     """)
 
+@app.get("/agent/deploy-status")
+async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
+    """
+    Checks the GitHub deployment status for a branch.
+    Since we use Cloud Run CD, we check the 'deployments' API.
+    """
+    try:
+        token = git_ops._get_installation_token()
+        repo_name = "cliaadmin-ops/clia-website"
+        url = f"https://api.github.com/repos/{repo_name}/deployments?ref={branch}&per_page=1"
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github+json",
+        }
+        
+        resp = requests.get(url, headers=headers)
+        deployments = resp.json()
+        
+        if not deployments:
+            return HTMLResponse(content="<span class='text-gray-400'>No Deploy</span>")
+            
+        deployment_id = deployments[0]["id"]
+        status_url = f"https://api.github.com/repos/{repo_name}/deployments/{deployment_id}/statuses?per_page=1"
+        status_resp = requests.get(status_url, headers=headers)
+        statuses = status_resp.json()
+        
+        if not statuses:
+            return HTMLResponse(content="<span class='text-yellow-500 animate-pulse'>Pending...</span>")
+            
+        state = statuses[0]["state"]
+        if state == "success":
+            return HTMLResponse(content="<span class='text-green-600 font-bold'>● Live</span>")
+        elif state == "failure" or state == "error":
+            return HTMLResponse(content="<span class='text-red-600 font-bold'>● Failed</span>")
+        else:
+            return HTMLResponse(content=f"<span class='text-yellow-500 animate-pulse'>● {state.capitalize()}</span>")
+            
+    except Exception as e:
+        return HTMLResponse(content=f"<span class='text-gray-400'>Error: {str(e)[:10]}</span>")
+
 @app.post("/agent/update")
 async def update_content(request: UpdateRequest, user: str = Depends(get_iap_user)):
     try:
@@ -504,7 +552,15 @@ async def approve_update(branch: str, user: str = Depends(get_iap_user)):
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-green-50 border border-green-200">
             <h3 class="font-bold text-green-800 mb-1">Success!</h3>
             <p class="text-sm text-green-700">Changes from branch <b>{branch}</b> have been merged to <b>main</b> and published.</p>
-            <button hx-post="/agent/revert" hx-target="closest .message-agent" class="mt-2 text-[10px] text-red-600 underline">Undo (Revert Main)</button>
+            <div class="mt-2 flex items-center space-x-2">
+                <div id="prod-deploy-status" 
+                     hx-get="/agent/deploy-status?branch=main" 
+                     hx-trigger="load, every 10s"
+                     class="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white border border-green-200 text-green-600">
+                    Checking Prod...
+                </div>
+                <button hx-post="/agent/revert" hx-target="closest .message-agent" class="text-[10px] text-red-600 underline">Undo (Revert Main)</button>
+            </div>
         </div>
         """)
     except Exception as e:

@@ -106,20 +106,37 @@ class GitOps:
         self.repo.remotes.origin.fetch()
         
         # Check if the branch exists locally, if not, track it from remote
+        # We use a more robust checkout that handles the branch being remote-only
         try:
+            # Try to checkout existing local branch
             self.repo.git.checkout(branch_name)
             self.repo.remotes.origin.pull()
         except GitCommandError:
-            # If checkout fails, try to track the remote branch
-            self.repo.git.checkout('-b', branch_name, f'origin/{branch_name}')
+            # If local checkout fails, create it from the remote tracking branch
+            try:
+                self.repo.git.checkout('-b', branch_name, f'origin/{branch_name}')
+            except GitCommandError as e:
+                print(f"DEBUG: Failed to checkout remote branch {branch_name}: {e}")
+                # Fallback: just try to merge the remote ref directly if checkout fails
+                pass
 
         self.repo.git.checkout('main')
         self.repo.remotes.origin.pull()
-        self.repo.git.merge(branch_name)
+        
+        # Merge the branch (using the remote ref if local checkout failed)
+        try:
+            self.repo.git.merge(branch_name)
+        except GitCommandError:
+            self.repo.git.merge(f'origin/{branch_name}')
+            
         self.repo.remotes.origin.push()
-        # Optionally delete the branch
-        self.repo.git.branch('-d', branch_name)
-        self.repo.git.push('origin', '--delete', branch_name)
+        
+        # Cleanup
+        try:
+            self.repo.git.branch('-d', branch_name)
+            self.repo.git.push('origin', '--delete', branch_name)
+        except:
+            pass
 
     def revert_main(self):
         """Reverts the last commit on the main branch."""
