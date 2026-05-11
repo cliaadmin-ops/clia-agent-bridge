@@ -198,37 +198,66 @@ async def chat_endpoint(
         AGENT_LOCK["timestamp"] = time.time()
 
         # Extraction & Staging Logic
-        extraction_parts = [
-            f"""
-            You are the CLIA Website Agent. 
-            Target: {triage_json.get('target', 'general')}
-            
-            Recent Conversation:
-            {history_context}
-
-            User Message: {message}
-            
-            Analyze the request and provide a summary of the proposed changes.
-            """
-        ]
+        # 1. Get the actual file content and proposed change from Gemini
+        # We'll use a more powerful model for the actual code/content generation
+        staging_model = "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
         
-        if doc_bytes and file.filename.endswith(".pdf"):
-            extraction_parts.append(
-                types.Part.from_bytes(data=doc_bytes, mime_type="application/pdf")
-            )
-        elif doc_bytes:
-            # Fallback for non-PDF files (treat as text if possible)
-            try:
-                extraction_parts.append(f"Document Content: {doc_bytes.decode('utf-8')}")
-            except:
-                pass
-
-        extraction_result = get_gemini_response("", model_to_use, contents=extraction_parts)
+        # Get list of files in the repo for context
+        files_list = []
+        for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
+            for f in files:
+                files_list.append(os.path.relpath(os.path.join(root, f), REPO_PATH))
         
+        staging_prompt = f"""
+        You are the CLIA Website Agent.
+        User Request: {message}
+        
+        Available Files:
+        {json.dumps(files_list, indent=2)}
+        
+        Recent Conversation:
+        {history_context}
+        
+        TASK:
+        1. Identify which file needs to be changed.
+        2. Provide the EXACT new content for that file.
+        3. Provide a short summary of the change.
+        
+        Return a JSON object with:
+        {{
+            "file_path": "path/to/file",
+            "new_content": "full content of the file",
+            "summary": "Short summary of changes"
+        }}
+        """
+        
+        staging_raw = get_gemini_response(staging_prompt, staging_model)
+        try:
+            staging_json = json.loads(staging_raw.strip('`').replace('json\n', ''))
+            file_to_change = staging_json.get("file_path")
+            new_content = staging_json.get("new_content")
+            extraction_result = staging_json.get("summary", "Update staged.")
+            
+            if file_to_change and new_content:
+                # 2. Perform the actual Git-Ops Staging
+                git_ops.sync_main()
+                branch_name = git_ops.create_content_branch("agent-update")
+                
+                full_file_path = os.path.join(REPO_PATH, file_to_change)
+                os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
+                with open(full_file_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                
+                git_ops.commit_and_push(f"Agent Update: {extraction_result}")
+            else:
+                extraction_result = "ERROR: Could not identify file or content to change."
+                branch_name = "error"
+        except Exception as e:
+            extraction_result = f"ERROR parsing staging plan: {str(e)}\nRaw: {staging_raw}"
+            branch_name = "error"
+
         # Save agent response to history
         await chat_manager.save_message(user, "assistant", f"STAGING UPDATE: {extraction_result}")
-        
-        branch_name = f"update-request-{int(time.time())}"
         
         response_html = f"""
         <div class="message-user p-3 rounded-lg max-w-[80%]">
@@ -342,16 +371,15 @@ async def approve_update(branch: str, user: str = Depends(get_iap_user)):
     global AGENT_LOCK
     try:
         print(f"User {user} is approving branch {branch}")
-        # git_ops.merge_to_main(branch) # Commented out for safety during dev
+        git_ops.merge_to_main(branch)
         
         # Release Lock
         AGENT_LOCK["locked"] = False
         
         return HTMLResponse(content=f"""
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-green-50 border border-green-200">
-            <h3 class="font-bold text-green-800 mb-1">Simulation Success!</h3>
-            <p class="text-sm italic text-green-700">"If I could write to the files yet, this is where I'd say <b>SUCCESS!</b>"</p>
-            <p class="text-xs mt-2 text-gray-500">Branch <b>{branch}</b> (simulated) is ready for the next phase of autonomy.</p>
+            <h3 class="font-bold text-green-800 mb-1">Success!</h3>
+            <p class="text-sm text-green-700">Changes from branch <b>{branch}</b> have been merged to <b>main</b> and published.</p>
             <button hx-post="/agent/revert" hx-target="closest .message-agent" class="mt-2 text-[10px] text-red-600 underline">Undo (Revert Main)</button>
         </div>
         """)
