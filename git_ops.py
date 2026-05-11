@@ -56,7 +56,16 @@ class GitOps:
         self.repo.git.clean('-fd')
 
     def create_content_branch(self, action_name):
-        self.sync_main()
+        """
+        Creates a new branch from the current state of 'dev' to ensure
+        incremental updates don't conflict with pending changes.
+        """
+        self.repo.remotes.origin.set_url(self._get_authenticated_url())
+        self.repo.git.fetch('--all')
+        self.repo.git.checkout('dev')
+        self.repo.git.reset('--hard', 'origin/dev')
+        self.repo.git.clean('-fd')
+        
         ts = int(time.time())
         branch_name = f"content-{action_name}-{ts}"
         new_branch = self.repo.create_head(branch_name)

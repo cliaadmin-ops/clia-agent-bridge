@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import base64
 import requests
 import PyPDF2
 import docx
@@ -208,6 +209,9 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                 summary = staging_json.get("summary", "Update staged.")
                 
                 if new_content:
+                    # Base64 encode content to prevent HTML/Quote mangling in the form
+                    encoded_content = base64.b64encode(new_content.encode('utf-8')).decode('utf-8')
+                    
                     confirm_html = f"""
                     <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
                         <h3 class="font-bold text-blue-800">Step 1: Verify Selection</h3>
@@ -218,7 +222,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                                 <input type="hidden" name="message_id" value="{message_id}">
                                 <input type="hidden" name="file" value="{file_to_change}">
                                 <input type="hidden" name="summary" value="{summary}">
-                                <input type="hidden" name="content" value="{new_content.replace('"', '&quot;')}">
+                                <input type="hidden" name="content_b64" value="{encoded_content}">
                                 <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3 rounded">Confirm & Stage</button>
                             </form>
                             <button hx-post="/agent/discard" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Discard</button>
@@ -322,8 +326,17 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
     except Exception: return HTMLResponse(content="<span class='status-pill bg-gray-100 text-gray-400'>Error</span>")
 
 @app.post("/agent/confirm-stage")
-async def confirm_stage(message_id: str = Form(...), file: str = Form(...), summary: str = Form(...), content: str = Form(...), user: str = Depends(get_iap_user)):
+async def confirm_stage(
+    message_id: str = Form(...), 
+    file: str = Form(...), 
+    summary: str = Form(...), 
+    content_b64: str = Form(...), 
+    user: str = Depends(get_iap_user)
+):
     try:
+        # Decode the content
+        content = base64.b64decode(content_b64).decode('utf-8')
+        
         git_ops.sync_main()
         branch_name = git_ops.create_content_branch(f"update-{int(time.time())}")
         full_path = os.path.join(REPO_PATH, file)
