@@ -85,6 +85,11 @@ class GitOps:
         return branch_name
 
     def commit_and_push(self, message):
+        """
+        Commits changes to the feature branch and merges it into 'dev'.
+        Uses a 'theirs' strategy to ensure the agent's new intent wins 
+        in case of minor conflicts on the integration branch.
+        """
         try:
             self.repo.remotes.origin.set_url(self._get_authenticated_url())
             self.repo.git.add(A=True)
@@ -95,12 +100,15 @@ class GitOps:
             origin.push(self.repo.active_branch)
             
             # 2. Update 'dev' branch
-            # Instead of force-pushing the feature branch to dev, 
-            # we merge the feature branch INTO dev to preserve other pending changes (like polish).
             current_branch = self.repo.active_branch.name
             self.repo.git.checkout('dev')
             self.repo.remotes.origin.pull()
-            self.repo.git.merge(current_branch)
+            
+            # Merge the feature branch into dev. 
+            # We use '-X theirs' to ensure the agent's new changes override 
+            # any stale state on the dev branch.
+            print(f"DEBUG: Merging {current_branch} into 'dev' with 'theirs' strategy")
+            self.repo.git.merge(current_branch, X='theirs')
             self.repo.remotes.origin.push()
             
             # 3. Return to the feature branch
@@ -109,7 +117,8 @@ class GitOps:
             print(f"DEBUG: Git push successful: {message}")
         except Exception as e:
             print(f"DEBUG: Git push FAILED: {str(e)}")
-            # Fallback to force push if merge fails
+            # Fallback: if merge fails, try to force push the state to dev
+            # to ensure the user can at least see the result.
             self.repo.git.push('origin', f"{self.repo.active_branch.name}:dev", force=True)
             raise e
 

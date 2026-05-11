@@ -193,6 +193,17 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             AGENT_LOCK["user"] = user
             AGENT_LOCK["timestamp"] = time.time()
 
+            # 0. Get Git Context
+            await chat_manager.update_message(message_id, "Checking Git status...")
+            git_ops.repo.remotes.origin.fetch()
+            diff_dev_main = git_ops.repo.git.diff('main..origin/dev', '--stat')
+            git_context = f"""
+            Current Git Status:
+            - Production (main) is the baseline.
+            - Staging (dev) has the following pending changes not yet in production:
+            {diff_dev_main if diff_dev_main else "None (dev is in sync with main)"}
+            """
+
             await chat_manager.update_message(message_id, "Identifying target files...")
             
             # Extraction & Staging Logic
@@ -257,6 +268,8 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             # 3. Generate the update
             staging_prompt = f"""
             You are the CLIA Website Agent. Your primary directive is to follow user instructions EXACTLY.
+            
+            {git_context}
             
             USER REQUEST: {message}
             FILE TO CHANGE: {file_to_change}
