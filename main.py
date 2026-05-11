@@ -648,8 +648,28 @@ async def approve_update(branch: str, user: str = Depends(get_iap_user)):
 @app.post("/agent/discard")
 async def discard_update(user: str = Depends(get_iap_user)):
     global AGENT_LOCK
-    AGENT_LOCK["locked"] = False
-    return HTMLResponse(content="<div class='text-gray-500 text-xs italic'>Update discarded. Agent unlocked.</div>")
+    try:
+        # 1. Reset Dev branch to Main
+        success = git_ops.discard_dev_changes()
+        
+        # 2. Release Lock
+        AGENT_LOCK["locked"] = False
+        
+        if success:
+            return HTMLResponse(content="""
+            <div class='message-agent p-3 rounded-lg max-w-[80%] bg-gray-50 border border-gray-200'>
+                <p class='text-xs italic text-gray-600'>Update discarded. <b>Dev Site</b> has been reset to match Production.</p>
+            </div>
+            """)
+        else:
+            return HTMLResponse(content="""
+            <div class='message-agent p-3 rounded-lg max-w-[80%] bg-red-50 border border-red-200'>
+                <p class='text-xs text-red-600'>Agent unlocked, but failed to reset Dev branch. Please check logs.</p>
+            </div>
+            """)
+    except Exception as e:
+        AGENT_LOCK["locked"] = False
+        return HTMLResponse(content=f"<div class='text-red-600 text-xs'>Error: {str(e)}</div>")
 
 @app.post("/agent/revert")
 async def revert_update(user: str = Depends(get_iap_user)):

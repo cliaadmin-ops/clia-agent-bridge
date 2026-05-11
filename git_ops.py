@@ -145,6 +145,27 @@ class GitOps:
         except:
             pass
 
+    def discard_dev_changes(self):
+        """
+        Resets the 'dev' branch to match 'main', effectively discarding 
+        any staged but unapproved changes.
+        """
+        try:
+            self.repo.remotes.origin.set_url(self._get_authenticated_url())
+            self.repo.remotes.origin.fetch()
+            
+            # Checkout main and ensure it's fresh
+            self.repo.git.checkout('main')
+            self.repo.remotes.origin.pull()
+            
+            # Force push main to dev to reset it
+            print("DEBUG: Resetting 'dev' branch to match 'main'")
+            self.repo.git.push('origin', 'main:dev', force=True)
+            return True
+        except Exception as e:
+            print(f"DEBUG: Failed to discard dev changes: {e}")
+            return False
+
     def revert_main(self):
         """Reverts the last commit on the main branch."""
         self.repo.remotes.origin.set_url(self._get_authenticated_url())
