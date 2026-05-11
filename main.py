@@ -484,10 +484,6 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
         latest_created = status_data.get("latestCreatedRevisionName")
         latest_ready = status_data.get("latestReadyRevisionName")
         
-        # If created != ready, it's definitely deploying
-        if latest_created != latest_ready:
-            return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Deploying...</span>")
-
         # We look for the 'Ready' condition
         conditions = status_data.get("conditions", [])
         ready_condition = next((c for c in conditions if c["type"] == "Ready"), None)
@@ -498,6 +494,11 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
         status = ready_condition.get("status") # "True", "False", or "Unknown"
         reason = ready_condition.get("reason", "")
         
+        # CRITICAL FIX: If created != ready, it is actively deploying a NEW revision.
+        # We must show "Deploying" even if the 'Ready' condition is still True (from the OLD revision).
+        if latest_created != latest_ready:
+            return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Deploying...</span>")
+
         if status == "True":
             return HTMLResponse(content="<span class='status-pill bg-green-100 text-green-700'>● Live</span>")
         elif status == "False":

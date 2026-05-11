@@ -185,8 +185,8 @@ class GitOps:
             self.repo.git.reset('--hard', 'origin/dev')
             
             # Check if there's actually anything to revert (is dev ahead of main?)
-            # If dev is not ahead of main, there's nothing to discard.
-            diff = self.repo.git.diff('main..dev')
+            # We compare the local dev branch with origin/main
+            diff = self.repo.git.diff('origin/main..dev')
             if not diff:
                 print("DEBUG: Dev is already in sync with main. Nothing to discard.")
                 return True
@@ -197,11 +197,8 @@ class GitOps:
                 # Try as a merge first (-m 1)
                 self.repo.git.revert('HEAD', m=1, no_edit=True)
             except GitCommandError as e:
-                if "is a merge but no -m option was given" in str(e):
-                    self.repo.git.revert('HEAD', m=1, no_edit=True)
-                else:
-                    # Fallback for non-merge commits
-                    self.repo.git.revert('HEAD', no_edit=True)
+                # Fallback for non-merge commits
+                self.repo.git.revert('HEAD', no_edit=True)
             
             # Push the revert to dev
             self.repo.remotes.origin.push()
