@@ -159,9 +159,15 @@ class GitOps:
             self.repo.remotes.origin.pull()
             
             # Revert the last commit on dev
-            # We use no_edit to avoid the interactive editor
-            print("DEBUG: Surgically reverting last commit on 'dev'")
-            self.repo.git.revert('HEAD', no_edit=True)
+            # Since the agent stages via a merge, we must specify '-m 1' 
+            # to tell Git to keep the 'dev' branch's mainline history.
+            print("DEBUG: Surgically reverting last merge commit on 'dev'")
+            try:
+                # Try as a merge first
+                self.repo.git.revert('HEAD', m=1, no_edit=True)
+            except GitCommandError:
+                # Fallback for non-merge commits
+                self.repo.git.revert('HEAD', no_edit=True)
             
             # Push the revert to dev
             self.repo.remotes.origin.push()
