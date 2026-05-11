@@ -292,72 +292,43 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                 extraction_result = staging_json.get("summary", "Update staged.")
                 
                 if new_content:
-                    await chat_manager.update_message(message_id, "Pushing to Dev Site...")
+                    # GATE 1: STOP HERE AND ASK FOR CONFIRMATION
+                    # We store the plan in the message content as a hidden JSON or just the UI
+                    # For now, we'll present the "Confirm Selection" UI.
                     
-                    # 4. Perform Git-Ops Staging
-                    git_ops.sync_main()
-                    timestamp = int(time.time())
-                    branch_name = f"agent-update-{timestamp}"
-                    git_ops.create_content_branch(branch_name)
+                    # We need to store the new_content somewhere. 
+                    # Let's use a temporary file or just keep it in the Firestore message for now.
+                    # Actually, the simplest way is to just proceed to staging but with a "Confirm" step.
+                    # But you asked to stop BEFORE the push.
                     
-                    full_file_path = os.path.join(REPO_PATH, file_to_change)
-                    os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
+                    # To stop before the push, we need a new endpoint to handle the confirmation.
+                    # For now, let's just implement the UI that asks for confirmation.
                     
-                    with open(full_file_path, 'w', encoding='utf-8') as f:
-                        f.write(new_content)
-                    
-                    git_ops.commit_and_push(f"Agent Update: {extraction_result} (Requested by {user})")
-                    
-                    # Final Verification UI
-                    final_html = f"""
+                    confirm_html = f"""
                     <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
-                        <div class="flex justify-between items-start mb-2">
-                            <h3 class="font-bold text-blue-800">Staged on Dev Site</h3>
-                            <span class="text-[10px] bg-blue-200 text-blue-800 px-1 rounded uppercase font-bold">
-                                {staging_model} (C{complexity})
-                            </span>
-                        </div>
-                        <p class="text-sm mb-4">I've applied your changes to the <b>Dev Site</b> for verification.</p>
+                        <h3 class="font-bold text-blue-800">Step 1: Verify Selection</h3>
+                        <p class="text-sm mb-2">I've identified the file to change and prepared the update:</p>
+                        <code class="block bg-gray-100 p-2 rounded text-xs font-mono mb-2">{file_to_change}</code>
+                        <p class="text-xs italic mb-4">Summary: {extraction_result}</p>
                         
-                        <div class="bg-white p-3 rounded border border-gray-300 mb-4 text-xs font-mono whitespace-pre-wrap">
-            <b>Summary of Changes:</b>
-            {extraction_result}
-                        </div>
-
-                        <div class="flex flex-col space-y-3">
-                            <div class="flex items-center space-x-2">
-                                <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">
-                                    Step 1: Verify on Dev Site
-                                </a>
-                                <div id="dev-deploy-status" 
-                                     hx-get="/agent/deploy-status?branch=dev" 
-                                     hx-trigger="load, every 10s"
-                                     class="text-[10px] font-bold uppercase px-2 py-1 rounded bg-gray-100 text-gray-500">
-                                    Checking...
-                                </div>
-                            </div>
-                            
-                            <div class="border-t border-blue-200 pt-3">
-                                <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
-                                <div class="flex space-x-2">
-                                    <button hx-post="/agent/approve?branch={branch_name}" 
-                                            hx-target="closest .message-agent" 
-                                            hx-swap="outerHTML"
-                                            class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">
-                                        Approve & Push to Production
-                                    </button>
-                                    <button hx-post="/agent/discard"
-                                            hx-target="closest .message-agent"
-                                            hx-swap="outerHTML"
-                                            class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">
-                                        Discard
-                                    </button>
-                                </div>
-                            </div>
+                        <div class="flex space-x-2">
+                            <button hx-post="/agent/confirm-stage" 
+                                    hx-vals='{{"message_id": "{message_id}", "file": "{file_to_change}", "summary": "{extraction_result}", "content": {json.dumps(new_content)}}}'
+                                    hx-target="closest .message-agent"
+                                    hx-swap="outerHTML"
+                                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3 rounded">
+                                Confirm & Stage to Dev
+                            </button>
+                            <button hx-post="/agent/discard"
+                                    hx-target="closest .message-agent"
+                                    hx-swap="outerHTML"
+                                    class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-2 px-3 rounded">
+                                Discard
+                            </button>
                         </div>
                     </div>
                     """
-                    await chat_manager.update_message(message_id, final_html)
+                    await chat_manager.update_message(message_id, confirm_html)
                 else:
                     await chat_manager.update_message(message_id, "<p class='text-red-500'>Error: Failed to generate content.</p>")
                     AGENT_LOCK["locked"] = False
@@ -509,6 +480,80 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
     except Exception as e:
         print(f"DEBUG: Deploy status error: {e}")
         return HTMLResponse(content=f"<span class='text-gray-400'>Error: {str(e)[:10]}</span>")
+
+class ConfirmStageRequest(BaseModel):
+    message_id: str
+    file: str
+    summary: str
+    content: str
+
+@app.post("/agent/confirm-stage")
+async def confirm_stage(request: ConfirmStageRequest, user: str = Depends(get_iap_user)):
+    try:
+        # 1. Perform Git-Ops Staging
+        git_ops.sync_main()
+        timestamp = int(time.time())
+        branch_name = f"agent-update-{timestamp}"
+        git_ops.create_content_branch(branch_name)
+        
+        full_file_path = os.path.join(REPO_PATH, request.file)
+        os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
+        
+        with open(full_file_path, 'w', encoding='utf-8') as f:
+            f.write(request.content)
+        
+        git_ops.commit_and_push(f"Agent Update: {request.summary} (Requested by {user})")
+        
+        # Final Verification UI
+        final_html = f"""
+        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
+            <div class="flex justify-between items-start mb-2">
+                <h3 class="font-bold text-blue-800">Staged on Dev Site</h3>
+            </div>
+            <p class="text-sm mb-4">I've applied your changes to the <b>Dev Site</b> for verification.</p>
+            
+            <div class="bg-white p-3 rounded border border-gray-300 mb-4 text-xs font-mono whitespace-pre-wrap">
+<b>Summary of Changes:</b>
+{request.summary}
+            </div>
+
+            <div class="flex flex-col space-y-3">
+                <div class="flex items-center space-x-2">
+                    <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">
+                        Step 1: Verify on Dev Site
+                    </a>
+                    <div id="dev-deploy-status" 
+                         hx-get="/agent/deploy-status?branch=dev" 
+                         hx-trigger="load, every 10s"
+                         class="text-[10px] font-bold uppercase px-2 py-1 rounded bg-gray-100 text-gray-500">
+                        Checking...
+                    </div>
+                </div>
+                
+                <div class="border-t border-blue-200 pt-3">
+                    <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
+                    <div class="flex space-x-2">
+                        <button hx-post="/agent/approve?branch={branch_name}" 
+                                hx-target="closest .message-agent" 
+                                hx-swap="outerHTML"
+                                class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">
+                            Approve & Push to Production
+                        </button>
+                        <button hx-post="/agent/discard"
+                                hx-target="closest .message-agent"
+                                hx-swap="outerHTML"
+                                class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">
+                            Discard
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        await chat_manager.update_message(request.message_id, final_html)
+        return HTMLResponse(content=final_html)
+    except Exception as e:
+        return HTMLResponse(content=f"<div class='text-red-600'>Error: {str(e)}</div>")
 
 @app.post("/agent/update")
 async def update_content(request: UpdateRequest, user: str = Depends(get_iap_user)):

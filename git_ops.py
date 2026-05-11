@@ -116,38 +116,27 @@ class GitOps:
     def merge_to_main(self, branch_name):
         self.repo.remotes.origin.set_url(self._get_authenticated_url())
         
-        # Ensure the branch exists locally and is up to date
+        # 1. Ensure we have the latest from remote
         self.repo.remotes.origin.fetch()
         
-        # Check if the branch exists locally, if not, track it from remote
-        # We use a more robust checkout that handles the branch being remote-only
-        try:
-            # Try to checkout existing local branch
-            self.repo.git.checkout(branch_name)
-            self.repo.remotes.origin.pull()
-        except GitCommandError:
-            # If local checkout fails, create it from the remote tracking branch
-            try:
-                self.repo.git.checkout('-b', branch_name, f'origin/{branch_name}')
-            except GitCommandError as e:
-                print(f"DEBUG: Failed to checkout remote branch {branch_name}: {e}")
-                # Fallback: just try to merge the remote ref directly if checkout fails
-                pass
-
+        # 2. Checkout main and ensure it's fresh
         self.repo.git.checkout('main')
         self.repo.remotes.origin.pull()
         
-        # Merge the branch (using the remote ref if local checkout failed)
+        # 3. Merge the branch. We use the remote reference directly to avoid checkout issues.
+        # This is exactly how we push to dev, so it's the most reliable path.
         try:
-            self.repo.git.merge(branch_name)
-        except GitCommandError:
+            print(f"DEBUG: Attempting to merge origin/{branch_name} into main")
             self.repo.git.merge(f'origin/{branch_name}')
+        except GitCommandError as e:
+            print(f"DEBUG: Merge failed: {e}")
+            raise e
             
+        # 4. Push main
         self.repo.remotes.origin.push()
         
-        # Cleanup
+        # 5. Cleanup the temporary branch
         try:
-            self.repo.git.branch('-d', branch_name)
             self.repo.git.push('origin', '--delete', branch_name)
         except:
             pass

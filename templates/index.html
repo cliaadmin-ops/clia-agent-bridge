@@ -54,10 +54,12 @@
                       class="flex flex-col space-y-2">
                     
                     <div class="flex space-x-2">
-                        <input type="text" name="message" placeholder="Type your request here..." 
-                               class="flex-grow p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <textarea name="message" placeholder="Type your request here... (Shift+Enter for new line)" 
+                                  rows="1"
+                                  class="flex-grow p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden"
+                                  onkeydown="if(event.keyCode == 13 && !event.shiftKey) { event.preventDefault(); this.form.dispatchEvent(new Event('submit', {cancelable: true})); }"></textarea>
                         
-                        <label class="cursor-pointer bg-gray-200 hover:bg-gray-300 p-2 rounded-md transition duration-200">
+                        <label class="cursor-pointer bg-gray-200 hover:bg-gray-300 p-2 rounded-md transition duration-200 flex items-center justify-center">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.414a4 4 0 00-5.656-5.656l-6.415 6.414a6 6 0 108.486 8.486L20.5 13" />
                             </svg>
