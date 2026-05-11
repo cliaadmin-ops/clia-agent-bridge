@@ -213,10 +213,12 @@ async def chat_endpoint(
         Files: {json.dumps(files_list)}
         Return ONLY the file path.
         """
+        print(f"DEBUG: Identify prompt sent for request: {message}")
         file_to_change = get_gemini_response(identify_prompt, "gemini-3.1-flash-lite").strip().strip("'").strip('"')
+        print(f"DEBUG: File identified: {file_to_change}")
         
         if file_to_change not in files_list:
-            # Fallback to index.html if unsure
+            print(f"DEBUG: Identified file {file_to_change} not in list. Falling back to public/index.html")
             file_to_change = "public/index.html"
 
         # 2. Read the actual content of that file
@@ -225,6 +227,9 @@ async def chat_endpoint(
         if os.path.exists(full_file_path):
             with open(full_file_path, 'r', encoding='utf-8') as f:
                 current_content = f.read()
+            print(f"DEBUG: Read {len(current_content)} chars from {file_to_change}")
+        else:
+            print(f"DEBUG: File {full_file_path} does not exist!")
 
         # 3. Generate the update based on REAL content
         staging_prompt = f"""
@@ -247,13 +252,16 @@ async def chat_endpoint(
         }}
         """
         
+        print(f"DEBUG: Sending staging prompt to {staging_model}")
         staging_raw = get_gemini_response(staging_prompt, staging_model)
+        print(f"DEBUG: Staging raw response received (len: {len(staging_raw)})")
         try:
             staging_json = json.loads(staging_raw.strip('`').replace('json\n', ''))
             new_content = staging_json.get("new_content")
             extraction_result = staging_json.get("summary", "Update staged.")
             
             if new_content:
+                print(f"DEBUG: New content generated (len: {len(new_content)})")
                 # 4. Perform the actual Git-Ops Staging
                 git_ops.sync_main()
                 branch_name = git_ops.create_content_branch("agent-update")
@@ -262,11 +270,15 @@ async def chat_endpoint(
                 with open(full_file_path, 'w', encoding='utf-8') as f:
                     f.write(new_content)
                 
+                print(f"DEBUG: File written to {full_file_path}. Committing...")
                 git_ops.commit_and_push(f"Agent Update: {extraction_result} (Requested by {user})")
+                print(f"DEBUG: Push successful to branch {branch_name}")
             else:
+                print("DEBUG: ERROR: Gemini failed to generate new content.")
                 extraction_result = "ERROR: Gemini failed to generate new content."
                 branch_name = "error"
         except Exception as e:
+            print(f"DEBUG: ERROR parsing staging plan: {str(e)}")
             extraction_result = f"ERROR parsing staging plan: {str(e)}"
             branch_name = "error"
 
@@ -333,7 +345,22 @@ async def chat_endpoint(
                         data = json.load(f)
                         context += f"\n{target.upper()}:\n{json.dumps(data, indent=2)}\n"
         
-        query_prompt = f"{context}\n\nRecent Conversation:\n{history_context}\n\nUser Question: {message}\n\nProvide a concise answer."
+        query_prompt = f"""
+        You are the CLIA Website Agent. 
+        Current Website Data:
+        {context}
+        
+        Recent Conversation:
+        {history_context}
+        
+        User Question: {message}
+        
+        INSTRUCTIONS:
+        - Provide a concise, helpful answer.
+        - Do NOT give technical Git instructions (like 'git add' or 'commit') to the user.
+        - If a change failed, apologize and state that you will look into the logs.
+        - Maintain a professional, supportive tone.
+        """
         answer = get_gemini_response(query_prompt, model_to_use)
         
         # Save agent response to history

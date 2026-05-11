@@ -30,22 +30,30 @@ class ChatHistoryManager:
         Retrieves the last N messages for a user, ordered chronologically.
         """
         try:
+            # Simplified query to avoid composite index requirement
             query = (
                 self.collection
                 .where("user_email", "==", user_email)
-                .order_by("timestamp", direction=firestore.Query.DESCENDING)
                 .limit(limit)
             )
             
             docs = await query.get()
             
-            # Convert to list and reverse so they are in chronological order
+            # Convert to list and sort in Python
             history = []
             for doc in docs:
                 msg = doc.to_dict()
-                history.append({"role": msg["role"], "content": msg["content"]})
+                history.append({
+                    "role": msg["role"], 
+                    "content": msg["content"],
+                    "timestamp": msg.get("timestamp")
+                })
             
-            return history[::-1]
+            # Sort by timestamp (handling potential None values)
+            history.sort(key=lambda x: x["timestamp"] if x["timestamp"] else 0)
+            
+            # Return only role and content
+            return [{"role": h["role"], "content": h["content"]} for h in history]
         except Exception as e:
             print(f"Error retrieving from Firestore: {e}")
             return []
