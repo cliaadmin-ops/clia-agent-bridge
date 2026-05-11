@@ -90,13 +90,27 @@ class GitOps:
             self.repo.git.add(A=True)
             self.repo.index.commit(message)
             origin = self.repo.remote(name='origin')
-            # Push the feature branch for history
+            
+            # 1. Push the feature branch for history
             origin.push(self.repo.active_branch)
-            # Force push to 'dev' branch to trigger the preview deployment
-            self.repo.git.push('origin', f"{self.repo.active_branch.name}:dev", force=True)
+            
+            # 2. Update 'dev' branch
+            # Instead of force-pushing the feature branch to dev, 
+            # we merge the feature branch INTO dev to preserve other pending changes (like polish).
+            current_branch = self.repo.active_branch.name
+            self.repo.git.checkout('dev')
+            self.repo.remotes.origin.pull()
+            self.repo.git.merge(current_branch)
+            self.repo.remotes.origin.push()
+            
+            # 3. Return to the feature branch
+            self.repo.git.checkout(current_branch)
+            
             print(f"DEBUG: Git push successful: {message}")
         except Exception as e:
             print(f"DEBUG: Git push FAILED: {str(e)}")
+            # Fallback to force push if merge fails
+            self.repo.git.push('origin', f"{self.repo.active_branch.name}:dev", force=True)
             raise e
 
     def merge_to_main(self, branch_name):
