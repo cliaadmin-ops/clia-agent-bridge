@@ -165,7 +165,7 @@ class GitOps:
             
             # Checkout dev and ensure it's fresh
             self.repo.git.checkout('dev')
-            self.repo.remotes.origin.pull()
+            self.repo.git.reset('--hard', 'origin/dev')
             
             # Revert the last commit on dev
             # Since the agent stages via a merge, we must specify '-m 1' 
@@ -183,6 +183,12 @@ class GitOps:
             return True
         except Exception as e:
             print(f"DEBUG: Failed to surgically discard dev changes: {e}")
+            # If revert fails (e.g. nothing to revert or conflict), 
+            # we must ensure the repo is clean for the next task.
+            try:
+                self.repo.git.reset('--hard', 'origin/dev')
+            except:
+                pass
             return False
 
     def revert_main(self):
