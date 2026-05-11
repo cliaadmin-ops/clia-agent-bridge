@@ -340,8 +340,16 @@ async def confirm_stage(
         
         git_ops.sync_main()
         branch_name = git_ops.create_content_branch(f"update-{int(time.time())}")
-        full_path = os.path.normpath(os.path.join(REPO_PATH, file))
-        print(f"DEBUG: confirm_stage - Full Path: {full_path}")
+        
+        # Manifest paths often start with / and are relative to the 'public' folder
+        # We need to ensure they are joined correctly to REPO_PATH/public
+        rel_path = file.lstrip('/')
+        if not rel_path.startswith('public/'):
+            full_path = os.path.normpath(os.path.join(REPO_PATH, "public", rel_path))
+        else:
+            full_path = os.path.normpath(os.path.join(REPO_PATH, rel_path))
+            
+        print(f"DEBUG: confirm_stage - Final Full Path: {full_path}")
         
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, 'w', encoding='utf-8') as f: f.write(content)
