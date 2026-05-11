@@ -262,7 +262,7 @@ async def chat_endpoint(
                 with open(full_file_path, 'w', encoding='utf-8') as f:
                     f.write(new_content)
                 
-                git_ops.commit_and_push(f"Agent Update: {extraction_result}")
+                git_ops.commit_and_push(f"Agent Update: {extraction_result} (Requested by {user})")
             else:
                 extraction_result = "ERROR: Gemini failed to generate new content."
                 branch_name = "error"

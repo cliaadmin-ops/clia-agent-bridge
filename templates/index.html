@@ -83,8 +83,19 @@
         const chatHistory = document.getElementById('chat-history');
         const observer = new MutationObserver(() => {
             chatHistory.scrollTop = chatHistory.scrollHeight;
+            // Save to localStorage whenever chat changes
+            localStorage.setItem('clia_chat_history', chatHistory.innerHTML);
         });
         observer.observe(chatHistory, { childList: true });
+
+        // Restore from localStorage on load
+        window.addEventListener('load', () => {
+            const savedHistory = localStorage.getItem('clia_chat_history');
+            if (savedHistory) {
+                chatHistory.innerHTML = savedHistory;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+        });
     </script>
 </body>
 </html>
