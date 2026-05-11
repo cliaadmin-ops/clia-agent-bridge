@@ -480,8 +480,16 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
         data = resp.json()
         
         # 4. Parse Knative Service Status
+        status_data = data.get("status", {})
+        latest_created = status_data.get("latestCreatedRevisionName")
+        latest_ready = status_data.get("latestReadyRevisionName")
+        
+        # If created != ready, it's definitely deploying
+        if latest_created != latest_ready:
+            return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Deploying...</span>")
+
         # We look for the 'Ready' condition
-        conditions = data.get("status", {}).get("conditions", [])
+        conditions = status_data.get("conditions", [])
         ready_condition = next((c for c in conditions if c["type"] == "Ready"), None)
         
         if not ready_condition:
@@ -495,7 +503,6 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
         elif status == "False":
             return HTMLResponse(content=f"<span class='status-pill bg-red-100 text-red-700' title='{reason}'>● Failed</span>")
         else:
-            # status == "Unknown" usually means a deployment is in progress
             return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Deploying...</span>")
             
     except Exception as e:

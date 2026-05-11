@@ -87,29 +87,41 @@ class GitOps:
     def commit_and_push(self, message):
         """
         Commits changes to the feature branch and merges it into 'dev'.
-        Uses a 'theirs' strategy to ensure the agent's new intent wins 
-        in case of minor conflicts on the integration branch.
+        Uses a 'theirs' strategy to ensure the agent's new intent wins.
         """
         try:
             self.repo.remotes.origin.set_url(self._get_authenticated_url())
+            
+            # Ensure local state is clean
+            try:
+                self.repo.git.merge('--abort')
+            except:
+                pass
+            self.repo.git.reset('--hard')
+            
             self.repo.git.add(A=True)
             self.repo.index.commit(message)
             origin = self.repo.remote(name='origin')
             
-            # 1. Push the feature branch for history
-            origin.push(self.repo.active_branch)
-            
-            # 2. Update 'dev' branch
+            # 1. Update 'dev' branch directly from the local feature branch
             current_branch = self.repo.active_branch.name
             self.repo.git.checkout('dev')
             self.repo.remotes.origin.pull()
             
-            # Merge the feature branch into dev. 
-            # We use '-X theirs' to ensure the agent's new changes override 
-            # any stale state on the dev branch.
             print(f"DEBUG: Merging {current_branch} into 'dev' with 'theirs' strategy")
-            self.repo.git.merge(current_branch, X='theirs')
-            self.repo.remotes.origin.push()
+            try:
+                self.repo.git.merge(current_branch, X='theirs')
+            except GitCommandError as e:
+                print(f"DEBUG: Merge conflict on dev, forcing state: {e}")
+                # If merge fails even with 'theirs', we force dev to match the feature branch
+                self.repo.git.push('origin', f"{current_branch}:dev", force=True)
+                return
+                
+            # 2. Push only the 'dev' branch to trigger the deployment
+            # We also push the feature branch ref to 'origin' for history, 
+            # but we do it in a single push command if possible or just push dev.
+            print("DEBUG: Pushing 'dev' to origin")
+            self.repo.remotes.origin.push(['dev', f"{current_branch}:{current_branch}"])
             
             # 3. Return to the feature branch
             self.repo.git.checkout(current_branch)
@@ -117,17 +129,20 @@ class GitOps:
             print(f"DEBUG: Git push successful: {message}")
         except Exception as e:
             print(f"DEBUG: Git push FAILED: {str(e)}")
-            # Fallback: if merge fails, try to force push the state to dev
-            # to ensure the user can at least see the result.
-            self.repo.git.push('origin', f"{self.repo.active_branch.name}:dev", force=True)
             raise e
 
     def merge_to_main(self, branch_name):
         """
         Promotes the verified 'dev' branch to 'main'.
-        The 'branch_name' (temp agent branch) is also cleaned up.
         """
         self.repo.remotes.origin.set_url(self._get_authenticated_url())
+        
+        # Ensure local state is clean
+        try:
+            self.repo.git.merge('--abort')
+        except:
+            pass
+        self.repo.git.reset('--hard')
         
         # 1. Ensure we have the latest from remote
         self.repo.remotes.origin.fetch()
@@ -137,22 +152,24 @@ class GitOps:
         self.repo.remotes.origin.pull()
         
         # 3. Merge 'dev' into 'main'
-        # This ensures that exactly what was verified on dev goes to production.
         try:
             print("DEBUG: Promoting 'dev' branch to 'main'")
-            self.repo.git.merge('origin/dev')
+            self.repo.git.merge('origin/dev', X='theirs')
         except GitCommandError as e:
             print(f"DEBUG: Merge failed: {e}")
-            raise e
+            # Force main to match dev if merge fails (since dev is verified)
+            self.repo.git.push('origin', 'dev:main', force=True)
+            return
             
         # 4. Push main
         self.repo.remotes.origin.push()
         
-        # 5. Cleanup the temporary agent branch (it's already merged into dev/main)
+        # 5. Cleanup
         try:
             self.repo.git.push('origin', '--delete', branch_name)
         except:
             pass
+
 
     def discard_dev_changes(self):
         """
@@ -167,24 +184,31 @@ class GitOps:
             self.repo.git.checkout('dev')
             self.repo.git.reset('--hard', 'origin/dev')
             
+            # Check if there's actually anything to revert (is dev ahead of main?)
+            # If dev is not ahead of main, there's nothing to discard.
+            diff = self.repo.git.diff('main..dev')
+            if not diff:
+                print("DEBUG: Dev is already in sync with main. Nothing to discard.")
+                return True
+
             # Revert the last commit on dev
-            # Since the agent stages via a merge, we must specify '-m 1' 
-            # to tell Git to keep the 'dev' branch's mainline history.
             print("DEBUG: Surgically reverting last merge commit on 'dev'")
             try:
-                # Try as a merge first
+                # Try as a merge first (-m 1)
                 self.repo.git.revert('HEAD', m=1, no_edit=True)
-            except GitCommandError:
-                # Fallback for non-merge commits
-                self.repo.git.revert('HEAD', no_edit=True)
+            except GitCommandError as e:
+                if "is a merge but no -m option was given" in str(e):
+                    self.repo.git.revert('HEAD', m=1, no_edit=True)
+                else:
+                    # Fallback for non-merge commits
+                    self.repo.git.revert('HEAD', no_edit=True)
             
             # Push the revert to dev
             self.repo.remotes.origin.push()
             return True
         except Exception as e:
             print(f"DEBUG: Failed to surgically discard dev changes: {e}")
-            # If revert fails (e.g. nothing to revert or conflict), 
-            # we must ensure the repo is clean for the next task.
+            # Ensure the repo is clean for the next task
             try:
                 self.repo.git.reset('--hard', 'origin/dev')
             except:
