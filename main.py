@@ -255,8 +255,16 @@ async def chat_endpoint(
         print(f"DEBUG: Sending staging prompt to {staging_model}")
         staging_raw = get_gemini_response(staging_prompt, staging_model)
         print(f"DEBUG: Staging raw response received (len: {len(staging_raw)})")
+        
         try:
-            staging_json = json.loads(staging_raw.strip('`').replace('json\n', ''))
+            # Robust JSON extraction
+            json_str = staging_raw
+            if "```json" in json_str:
+                json_str = json_str.split("```json")[1].split("```")[0]
+            elif "```" in json_str:
+                json_str = json_str.split("```")[1].split("```")[0]
+            
+            staging_json = json.loads(json_str.strip())
             new_content = staging_json.get("new_content")
             extraction_result = staging_json.get("summary", "Update staged.")
             
@@ -266,7 +274,10 @@ async def chat_endpoint(
                 git_ops.sync_main()
                 branch_name = git_ops.create_content_branch("agent-update")
                 
+                # Ensure we are writing to the correct path
+                full_file_path = os.path.join(REPO_PATH, file_to_change)
                 os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
+                
                 with open(full_file_path, 'w', encoding='utf-8') as f:
                     f.write(new_content)
                 
@@ -274,11 +285,12 @@ async def chat_endpoint(
                 git_ops.commit_and_push(f"Agent Update: {extraction_result} (Requested by {user})")
                 print(f"DEBUG: Push successful to branch {branch_name}")
             else:
-                print("DEBUG: ERROR: Gemini failed to generate new content.")
-                extraction_result = "ERROR: Gemini failed to generate new content."
+                print("DEBUG: ERROR: Gemini failed to generate new content field.")
+                extraction_result = "ERROR: Gemini failed to generate new content field."
                 branch_name = "error"
         except Exception as e:
             print(f"DEBUG: ERROR parsing staging plan: {str(e)}")
+            print(f"DEBUG: Raw response was: {staging_raw[:500]}...")
             extraction_result = f"ERROR parsing staging plan: {str(e)}"
             branch_name = "error"
 
