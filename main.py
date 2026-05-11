@@ -198,34 +198,50 @@ async def chat_endpoint(
         AGENT_LOCK["timestamp"] = time.time()
 
         # Extraction & Staging Logic
-        # 1. Get the actual file content and proposed change from Gemini
-        # We'll use a more powerful model for the actual code/content generation
         staging_model = "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
         
-        # Get list of files in the repo for context
+        # 1. Identify the target file
         files_list = []
         for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
             for f in files:
-                files_list.append(os.path.relpath(os.path.join(root, f), REPO_PATH))
+                rel_path = os.path.relpath(os.path.join(root, f), REPO_PATH)
+                files_list.append(rel_path)
         
+        identify_prompt = f"""
+        Identify which file in this list most likely contains the content the user wants to change.
+        User Request: {message}
+        Files: {json.dumps(files_list)}
+        Return ONLY the file path.
+        """
+        file_to_change = get_gemini_response(identify_prompt, "gemini-3.1-flash-lite").strip().strip("'").strip('"')
+        
+        if file_to_change not in files_list:
+            # Fallback to index.html if unsure
+            file_to_change = "public/index.html"
+
+        # 2. Read the actual content of that file
+        full_file_path = os.path.join(REPO_PATH, file_to_change)
+        current_content = ""
+        if os.path.exists(full_file_path):
+            with open(full_file_path, 'r', encoding='utf-8') as f:
+                current_content = f.read()
+
+        # 3. Generate the update based on REAL content
         staging_prompt = f"""
         You are the CLIA Website Agent.
         User Request: {message}
-        
-        Available Files:
-        {json.dumps(files_list, indent=2)}
-        
-        Recent Conversation:
-        {history_context}
+        File to change: {file_to_change}
+        Current Content:
+        ---
+        {current_content}
+        ---
         
         TASK:
-        1. Identify which file needs to be changed.
-        2. Provide the EXACT new content for that file.
-        3. Provide a short summary of the change.
+        1. Provide the EXACT new content for the entire file.
+        2. Provide a short summary of the change.
         
         Return a JSON object with:
         {{
-            "file_path": "path/to/file",
             "new_content": "full content of the file",
             "summary": "Short summary of changes"
         }}
@@ -234,26 +250,24 @@ async def chat_endpoint(
         staging_raw = get_gemini_response(staging_prompt, staging_model)
         try:
             staging_json = json.loads(staging_raw.strip('`').replace('json\n', ''))
-            file_to_change = staging_json.get("file_path")
             new_content = staging_json.get("new_content")
             extraction_result = staging_json.get("summary", "Update staged.")
             
-            if file_to_change and new_content:
-                # 2. Perform the actual Git-Ops Staging
+            if new_content:
+                # 4. Perform the actual Git-Ops Staging
                 git_ops.sync_main()
                 branch_name = git_ops.create_content_branch("agent-update")
                 
-                full_file_path = os.path.join(REPO_PATH, file_to_change)
                 os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
                 with open(full_file_path, 'w', encoding='utf-8') as f:
                     f.write(new_content)
                 
                 git_ops.commit_and_push(f"Agent Update: {extraction_result}")
             else:
-                extraction_result = "ERROR: Could not identify file or content to change."
+                extraction_result = "ERROR: Gemini failed to generate new content."
                 branch_name = "error"
         except Exception as e:
-            extraction_result = f"ERROR parsing staging plan: {str(e)}\nRaw: {staging_raw}"
+            extraction_result = f"ERROR parsing staging plan: {str(e)}"
             branch_name = "error"
 
         # Save agent response to history
