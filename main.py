@@ -135,12 +135,20 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
         model_to_use = "gemini-3.1-flash-lite" if complexity <= 3 else "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
         
         if intent == "WRITE" or doc_bytes:
-            await chat_manager.update_message(message_id, "Checking Git status...")
-            git_ops.repo.remotes.origin.fetch()
+            # Acquire Lock
+            AGENT_LOCK["locked"] = True
+            AGENT_LOCK["user"] = user
+            AGENT_LOCK["timestamp"] = time.time()
+
+            # 0. Sync Main and Get Context
+            await chat_manager.update_message(message_id, "Syncing repository...")
+            git_ops.sync_main()
+            
             diff_stat = git_ops.repo.git.diff('main..origin/dev', '--stat')
             git_context = f"Baseline: main. Pending on dev: {diff_stat if diff_stat else 'None'}"
 
             await chat_manager.update_message(message_id, "Identifying target files...")
+
             
             # 1. Identify the target file
             manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
