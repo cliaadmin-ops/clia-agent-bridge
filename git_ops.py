@@ -114,6 +114,10 @@ class GitOps:
             raise e
 
     def merge_to_main(self, branch_name):
+        """
+        Promotes the verified 'dev' branch to 'main'.
+        The 'branch_name' (temp agent branch) is also cleaned up.
+        """
         self.repo.remotes.origin.set_url(self._get_authenticated_url())
         
         # 1. Ensure we have the latest from remote
@@ -123,11 +127,11 @@ class GitOps:
         self.repo.git.checkout('main')
         self.repo.remotes.origin.pull()
         
-        # 3. Merge the branch. We use the remote reference directly to avoid checkout issues.
-        # This is exactly how we push to dev, so it's the most reliable path.
+        # 3. Merge 'dev' into 'main'
+        # This ensures that exactly what was verified on dev goes to production.
         try:
-            print(f"DEBUG: Attempting to merge origin/{branch_name} into main")
-            self.repo.git.merge(f'origin/{branch_name}')
+            print("DEBUG: Promoting 'dev' branch to 'main'")
+            self.repo.git.merge('origin/dev')
         except GitCommandError as e:
             print(f"DEBUG: Merge failed: {e}")
             raise e
@@ -135,7 +139,7 @@ class GitOps:
         # 4. Push main
         self.repo.remotes.origin.push()
         
-        # 5. Cleanup the temporary branch
+        # 5. Cleanup the temporary agent branch (it's already merged into dev/main)
         try:
             self.repo.git.push('origin', '--delete', branch_name)
         except:
