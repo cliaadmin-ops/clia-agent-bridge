@@ -266,34 +266,44 @@ async def chat_endpoint(
         </div>
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
             <div class="flex justify-between items-start mb-2">
-                <h3 class="font-bold text-blue-800">Staging Update</h3>
+                <h3 class="font-bold text-blue-800">Staged on Dev Site</h3>
                 <span class="text-[10px] bg-blue-200 text-blue-800 px-1 rounded uppercase font-bold">
-                    {model_to_use} (C{complexity})
+                    {staging_model} (C{complexity})
                 </span>
             </div>
-            <p class="text-sm mb-4">I've analyzed your request. I'm ready to stage these changes to the <b>Dev Site</b>.</p>
+            <p class="text-sm mb-4">I've applied your changes to the <b>Dev Site</b> for verification.</p>
             
             <div class="bg-white p-3 rounded border border-gray-300 mb-4 text-xs font-mono whitespace-pre-wrap">
+<b>Summary of Changes:</b>
 {extraction_result}
             </div>
 
-            <div class="flex space-x-2">
-                <button hx-post="/agent/approve?branch={branch_name}" 
-                        hx-target="closest .message-agent" 
-                        hx-swap="outerHTML"
-                        class="bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">
-                    Approve & Publish
-                </button>
-                <button hx-post="/agent/discard"
-                        hx-target="closest .message-agent"
-                        hx-swap="outerHTML"
-                        class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">
-                    Discard
-                </button>
-                <a href="{git_ops.get_dev_url()}" target="_blank" class="text-blue-600 text-xs underline py-1">Preview on Dev Site</a>
+            <div class="flex flex-col space-y-3">
+                <a href="{git_ops.get_dev_url()}" target="_blank" class="bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">
+                    Step 1: Verify on Dev Site
+                </a>
+                
+                <div class="border-t border-blue-200 pt-3">
+                    <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
+                    <div class="flex space-x-2">
+                        <button hx-post="/agent/approve?branch={branch_name}" 
+                                hx-target="closest .message-agent" 
+                                hx-swap="outerHTML"
+                                class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">
+                            Approve & Push to Production
+                        </button>
+                        <button hx-post="/agent/discard"
+                                hx-target="closest .message-agent"
+                                hx-swap="outerHTML"
+                                class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">
+                            Discard
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
         """
+
     else:
         # READ Logic
         manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
