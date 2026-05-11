@@ -1,57 +1,32 @@
-# Tech Spec: CLIA Agent Bridge (v1.0)
+# Technical Specification: CLIA Agent Bridge
 
-## Overview
-The Agent Bridge is a secure middleware service that allows the CLIA Gemini Agent to perform content updates on the website repository using a Git-Ops workflow.
+## System Overview
+The CLIA Agent Bridge is a standalone FastAPI service that acts as an autonomous Git-Ops orchestrator for the CLIA website. It bridges the gap between natural language requests and structured repository updates.
 
-## 1. Architecture
-- **Runtime:** Python 3.11+ (FastAPI)
-- **Deployment:** Cloud Run (in the `eminent-goods` project)
-- **Authentication:** Google OAuth 2.0 (Restricted to `@canadaragolake.com`)
-- **Storage:** Ephemeral (Clones repo to `/tmp` or uses a persistent volume if needed)
+## Core Architecture
+- **Backend:** FastAPI, `google-genai` SDK (Gemini Enterprise Agent Platform).
+- **Git-Ops:** `GitPython` managing a local clone of the website repository.
+- **Persistence:** Firestore (Async) for chat history; LocalStorage for UI session continuity.
+- **Deployment:** Cloud Run (Global Endpoint).
 
-## 2. API Endpoints
+## The "Two-Gate" Workflow (Safety Protocol)
+1.  **Staging (Gate 1):**
+    - Agent identifies the target file, reads current content, and generates the update.
+    - Agent pushes changes to the `dev` branch.
+    - User verifies changes on the Dev URL.
+2.  **Production (Gate 2):**
+    - User clicks "Approve & Push to Production" in the UI.
+    - Agent merges `dev` branch into `main` and pushes to production.
+    - **CRITICAL:** The Agent MUST NEVER push to `main` without explicit user approval.
 
-### `POST /auth/login`
-- Handles Google OAuth callback.
-- Verifies domain and issues a session JWT.
+## Content-Aware Staging Protocol
+When a user requests a change:
+1.  **Identify:** Agent scans the `public/` directory and reads file snippets to identify the correct file.
+2.  **Read:** Agent reads the *full* current content of the target file.
+3.  **Edit:** Agent generates the *full* new content of the file.
+4.  **Commit:** Agent commits with the message: `Agent Update: [Summary] (Requested by [user_email])`.
 
-### `POST /agent/update`
-- **Payload:**
-  ```json
-  {
-    "action": "update_data",
-    "target": "board",
-    "data": { ... },
-    "message": "Update board member"
-  }
-  ```
-- **Logic:**
-  1. Validates session.
-  2. Pulls latest `main`.
-  3. Creates `content-update-[ts]` branch.
-  4. Updates `public/data/board.json`.
-  5. Commits and pushes to `origin`.
-  6. Returns the Dev URL for review.
-
-### `POST /agent/approve`
-- **Payload:** `{"branch": "content-update-[ts]"}`
-- **Logic:** Merges branch to `main` and pushes.
-
-### `POST /agent/parse-doc`
-- **Payload:** Multipart File (PDF/Docx)
-- **Logic:** Extracts text and returns a structured JSON summary for the agent to process.
-
-## 3. Security
-- **Authentication:** Google Identity-Aware Proxy (IAP).
-- **Access Control:** Restricted to the `sitemanagers@canadaragolake.com` Google Group via the `IAP-secured Web App User` role.
-- **Identity Verification:** The application will verify the `X-Goog-Authenticated-User-Email` header to log user actions.
-- **GitHub Token:** Stored in GCP Secret Manager.
-- **Branch Protection:** The bridge is the only entity allowed to push to `main` (besides admins).
-- **Audit Log:** All actions logged to a BigQuery table or simple log file.
-
----
-
-## Next Steps
-1. Initialize `requirements.txt`.
-2. Implement `git_ops.py` using `GitPython`.
-3. Scaffold `main.py` with FastAPI.
+## Cross-Repo Documentation Sync
+- **Website Repo:** Content manifest, site structure.
+- **Bridge Repo:** Agent logic, Git-Ops workflow, API endpoints.
+- **Protocol:** Any change to the website structure (e.g., new editable JSON file) must be reflected in `site-manifest.json` AND documented in the Bridge's `docs/` folder.
