@@ -233,17 +233,21 @@ async def chat_endpoint(
 
         # 3. Generate the update based on REAL content
         staging_prompt = f"""
-        You are the CLIA Website Agent.
-        User Request: {message}
-        File to change: {file_to_change}
-        Current Content:
+        You are the CLIA Website Agent. Your primary directive is to follow user instructions EXACTLY.
+        
+        USER REQUEST: {message}
+        FILE TO CHANGE: {file_to_change}
+        
+        CURRENT FILE CONTENT:
         ---
         {current_content}
         ---
         
         TASK:
-        1. Provide the EXACT new content for the entire file.
-        2. Provide a short summary of the change.
+        1. Modify the file content to satisfy the user request.
+        2. DO NOT make any changes that were not explicitly requested. No "creative improvements," no extra banners, no layout changes unless asked.
+        3. Provide the EXACT new content for the entire file.
+        4. Provide a short summary of the change.
         
         Return a JSON object with:
         {{
