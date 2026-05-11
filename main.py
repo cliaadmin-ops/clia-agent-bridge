@@ -449,7 +449,7 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
         # 1. Get recent deployments
         url = f"https://api.github.com/repos/{repo_name}/deployments?per_page=15"
         headers = {
-            "Authorization": f"token {token}",
+            "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
         }
         
