@@ -202,10 +202,12 @@ async def chat_endpoint(
         
         # 1. Identify the target file by content
         files_content = {}
+        files_list = [] # Define files_list here
         for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
             for f in files:
                 if f.endswith(".html"):
                     rel_path = os.path.relpath(os.path.join(root, f), REPO_PATH)
+                    files_list.append(rel_path)
                     with open(os.path.join(root, f), 'r', encoding='utf-8') as file:
                         files_content[rel_path] = file.read(2000) # Read first 2000 chars
         
@@ -223,11 +225,11 @@ async def chat_endpoint(
         print(f"DEBUG: Identify prompt sent for request: {message}")
         file_to_change = get_gemini_response(identify_prompt, "gemini-3.1-flash-lite").strip().strip("'").strip('"')
         print(f"DEBUG: File identified: {file_to_change}")
-
         
         if file_to_change not in files_list:
             print(f"DEBUG: Identified file {file_to_change} not in list. Falling back to public/index.html")
             file_to_change = "public/index.html"
+
 
         # 2. Read the actual content of that file
         full_file_path = os.path.join(REPO_PATH, file_to_change)
