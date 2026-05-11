@@ -135,57 +135,51 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
         model_to_use = "gemini-3.1-flash-lite" if complexity <= 3 else "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
         
         if intent == "WRITE" or doc_bytes:
-            # Acquire Lock
-            AGENT_LOCK["locked"] = True
-            AGENT_LOCK["user"] = user
-            AGENT_LOCK["timestamp"] = time.time()
-
-            # 0. Sync Main and Get Context
-            await chat_manager.update_message(message_id, "Syncing repository...")
-            git_ops.sync_main()
-            
-            diff_stat = git_ops.repo.git.diff('main..origin/dev', '--stat')
-            git_context = f"Baseline: main. Pending on dev: {diff_stat if diff_stat else 'None'}"
-
-            await chat_manager.update_message(message_id, "Identifying target files...")
-
-            
-            # 1. Identify the target file
-            manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
-            manifest_content = ""
-            if os.path.exists(manifest_path):
-                with open(manifest_path, 'r') as f:
-                    manifest_content = f.read()
-
-            files_content = {}
-            files_list = []
-            for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
-                for f in files:
-                    if f.endswith((".html", ".json")):
-                        rel_path = os.path.relpath(os.path.join(root, f), REPO_PATH)
-                        files_list.append(rel_path)
-                        if f.endswith(".html"):
-                            with open(os.path.join(root, f), 'r', encoding='utf-8') as file:
-                                files_content[rel_path] = file.read(1000)
-            
-            identify_prompt = f"Identify the file to modify. Site Manifest: {manifest_content}. Available Files: {json.dumps(files_content)}. Request: {message}"
-            file_to_change = get_gemini_response(identify_prompt, "gemini-3.1-flash-lite").strip().strip("'").strip('"')
-            
-            if file_to_change not in files_list:
-                file_to_change = "public/index.html"
-            
-            await chat_manager.update_message(message_id, f"Reading {file_to_change}...")
-            full_path = os.path.join(REPO_PATH, file_to_change)
-            current_content = ""
-            if os.path.exists(full_path):
-                with open(full_path, 'r', encoding='utf-8') as f:
-                    current_content = f.read()
-
-            await chat_manager.update_message(message_id, "Generating staging plan...")
-            staging_prompt = f"Modify {file_to_change}. Context: {git_context}. Request: {message}. Content: {current_content}"
-            staging_raw = get_gemini_response(staging_prompt, "gemini-3-flash-preview")
-            
             try:
+                # 0. Sync Main and Get Context
+                await chat_manager.update_message(message_id, "Syncing repository...")
+                git_ops.sync_main()
+                
+                diff_stat = git_ops.repo.git.diff('main..origin/dev', '--stat')
+                git_context = f"Baseline: main. Pending on dev: {diff_stat if diff_stat else 'None'}"
+
+                await chat_manager.update_message(message_id, "Identifying target files...")
+
+                # 1. Identify the target file
+                manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
+                manifest_content = ""
+                if os.path.exists(manifest_path):
+                    with open(manifest_path, 'r') as f:
+                        manifest_content = f.read()
+
+                files_content = {}
+                files_list = []
+                for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
+                    for f in files:
+                        if f.endswith((".html", ".json")):
+                            rel_path = os.path.relpath(os.path.join(root, f), REPO_PATH)
+                            files_list.append(rel_path)
+                            if f.endswith(".html"):
+                                with open(os.path.join(root, f), 'r', encoding='utf-8') as file:
+                                    files_content[rel_path] = file.read(1000)
+                
+                identify_prompt = f"Identify the file to modify. Site Manifest: {manifest_content}. Available Files: {json.dumps(files_content)}. Request: {message}"
+                file_to_change = get_gemini_response(identify_prompt, "gemini-3.1-flash-lite").strip().strip("'").strip('"')
+                
+                if file_to_change not in files_list:
+                    file_to_change = "public/index.html"
+                
+                await chat_manager.update_message(message_id, f"Reading {file_to_change}...")
+                full_path = os.path.join(REPO_PATH, file_to_change)
+                current_content = ""
+                if os.path.exists(full_path):
+                    with open(full_path, 'r', encoding='utf-8') as f:
+                        current_content = f.read()
+
+                await chat_manager.update_message(message_id, "Generating staging plan...")
+                staging_prompt = f"Modify {file_to_change}. Context: {git_context}. Request: {message}. Content: {current_content}"
+                staging_raw = get_gemini_response(staging_prompt, "gemini-3-flash-preview")
+                
                 json_str = staging_raw
                 if "```json" in json_str: json_str = json_str.split("```json")[1].split("```")[0]
                 staging_json = json.loads(json_str.strip())
@@ -211,11 +205,13 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                     </div>
                     """
                     await chat_manager.update_message(message_id, confirm_html)
+                    # LOCK PERSISTS until user confirms/discards
                 else:
                     await chat_manager.update_message(message_id, "Error: Failed to generate content.")
                     await chat_manager.release_lock(user)
             except Exception as e:
-                await chat_manager.update_message(message_id, f"Error: {e}")
+                print(f"Write Error: {e}")
+                await chat_manager.update_message(message_id, f"Error during staging: {e}")
                 await chat_manager.release_lock(user)
         else:
             # READ Logic
@@ -243,7 +239,13 @@ async def chat_endpoint(
     if lock_status["locked"]:
         return HTMLResponse(content=f"""
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-yellow-50 border border-yellow-200">
-            <p class="text-sm text-yellow-800"><b>Agent Busy:</b> {lock_status['user']} is staging an update. Please try again in a few minutes.</p>
+            <p class="text-sm text-yellow-800"><b>Agent Busy:</b> {lock_status['user']} is staging an update.</p>
+            <button hx-post="/agent/unlock" 
+                    hx-target="closest .message-agent"
+                    hx-swap="outerHTML"
+                    class="mt-2 text-[10px] bg-yellow-200 hover:bg-yellow-300 text-yellow-800 py-1 px-2 rounded border border-yellow-400">
+                Force Unlock
+            </button>
         </div>
         """)
 
@@ -324,7 +326,6 @@ async def confirm_stage(message_id: str = Form(...), file: str = Form(...), summ
 async def approve_update(branch: str, user: str = Depends(get_iap_user)):
     try:
         git_ops.merge_to_main(branch)
-        await chat_manager.release_lock(user)
         return HTMLResponse(content=f"""
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-green-50 border border-green-200">
             <h3 class="font-bold text-green-800 mb-1">Success!</h3>
@@ -335,18 +336,22 @@ async def approve_update(branch: str, user: str = Depends(get_iap_user)):
             </div>
         </div>
         """)
-    except Exception as e: return HTMLResponse(content=f"<div class='text-red-600'>Error: {e}</div>")
+    except Exception as e: 
+        return HTMLResponse(content=f"<div class='text-red-600'>Error: {e}</div>")
+    finally:
+        await chat_manager.release_lock(user)
 
 @app.post("/agent/discard")
 async def discard_update(user: str = Depends(get_iap_user)):
     try:
         success = git_ops.discard_dev_changes()
-        await chat_manager.release_lock(user)
-        if success: return HTMLResponse(content="<div class='message-agent p-3 rounded-lg max-w-[80%] bg-gray-50 border border-gray-200'><p class='text-xs italic text-gray-600'>Update discarded. Dev Site reset.</p></div>")
+        if success: 
+            return HTMLResponse(content="<div class='message-agent p-3 rounded-lg max-w-[80%] bg-gray-50 border border-gray-200'><p class='text-xs italic text-gray-600'>Update discarded. Dev Site reset.</p></div>")
         return HTMLResponse(content="<div class='message-agent p-3 rounded-lg max-w-[80%] bg-red-50 border border-red-200'><p class='text-xs text-red-600'>Reset failed.</p></div>")
     except Exception as e:
-        await chat_manager.release_lock(user)
         return HTMLResponse(content=f"<div class='text-red-600 text-xs'>Error: {e}</div>")
+    finally:
+        await chat_manager.release_lock(user)
 
 @app.post("/agent/revert")
 async def revert_update(user: str = Depends(get_iap_user)):
@@ -358,7 +363,12 @@ async def revert_update(user: str = Depends(get_iap_user)):
 @app.post("/agent/unlock")
 async def force_unlock(user: str = Depends(get_iap_user)):
     await chat_manager.release_lock(user)
-    return {"status": "success", "message": "Agent manually unlocked."}
+    # Return HTML if requested by HTMX, otherwise JSON
+    return HTMLResponse(content="""
+    <div class="message-agent p-3 rounded-lg max-w-[80%] bg-green-50 border border-green-200">
+        <p class="text-xs text-green-700 italic">Agent manually unlocked. You can now send a new request.</p>
+    </div>
+    """)
 
 @app.post("/agent/clear")
 async def clear_chat_history(user: str = Depends(get_iap_user)):

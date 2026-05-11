@@ -84,8 +84,13 @@
             </div>
         </main>
         
-        <footer class="mt-4 text-center text-xs text-gray-500">
-            CLIA Agent Bridge v1.0 | Powered by Local-First AI
+        <footer class="mt-4 text-center text-xs text-gray-500 flex justify-between items-center">
+            <div>CLIA Agent Bridge v1.1 | Powered by Local-First AI</div>
+            <button hx-post="/agent/unlock" 
+                    hx-confirm="Are you sure you want to force unlock the agent? Only do this if you are certain no one else is currently staging an update."
+                    class="opacity-20 hover:opacity-100 text-[10px] underline cursor-pointer">
+                Force Unlock
+            </button>
         </footer>
     </div>
 

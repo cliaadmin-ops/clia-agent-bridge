@@ -50,10 +50,13 @@ class GitOps:
 
     def sync_main(self):
         self.repo.remotes.origin.set_url(self._get_authenticated_url())
+        self.repo.git.fetch('--all')
         self.repo.git.checkout('main')
-        self.repo.remotes.origin.pull()
+        self.repo.git.reset('--hard', 'origin/main')
+        self.repo.git.clean('-fd')
 
     def create_content_branch(self, action_name):
+        self.sync_main()
         ts = int(time.time())
         branch_name = f"content-{action_name}-{ts}"
         new_branch = self.repo.create_head(branch_name)
@@ -76,15 +79,18 @@ class GitOps:
             # 2. Push feature branch
             origin.push(current_branch)
             
-            # 3. Update 'dev' branch
+            # 3. Update 'dev' branch with Clean Slate
+            self.repo.git.fetch('--all')
             self.repo.git.checkout('dev')
-            self.repo.remotes.origin.pull()
+            self.repo.git.reset('--hard', 'origin/dev')
+            self.repo.git.clean('-fd')
             
             print(f"DEBUG: Merging {current_branch} into 'dev'")
             try:
+                # Use 'theirs' to prioritize the agent's new content
                 self.repo.git.merge(current_branch, X='theirs')
             except GitCommandError:
-                # If merge fails, force dev to match the feature branch
+                # Fallback: Force dev to match the feature branch exactly
                 self.repo.git.push('origin', f"{current_branch}:dev", force=True)
                 return
                 
@@ -99,14 +105,19 @@ class GitOps:
         Promotes 'dev' to 'main'.
         """
         self.repo.remotes.origin.set_url(self._get_authenticated_url())
-        self.repo.remotes.origin.fetch()
+        self.repo.git.fetch('--all')
+        
+        # Ensure main is clean
         self.repo.git.checkout('main')
-        self.repo.remotes.origin.pull()
+        self.repo.git.reset('--hard', 'origin/main')
+        self.repo.git.clean('-fd')
         
         try:
             print("DEBUG: Promoting 'dev' branch to 'main'")
+            # Merge origin/dev into main
             self.repo.git.merge('origin/dev', X='theirs')
         except GitCommandError:
+            # If merge fails, force main to match dev
             self.repo.git.push('origin', 'dev:main', force=True)
             return
             

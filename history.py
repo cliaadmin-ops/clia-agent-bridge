@@ -1,4 +1,5 @@
 import os
+import time
 from google.cloud import firestore
 from typing import List, Dict
 
