@@ -312,13 +312,18 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                         <p class="text-xs italic mb-4">Summary: {extraction_result}</p>
                         
                         <div class="flex space-x-2">
-                            <button hx-post="/agent/confirm-stage" 
-                                    hx-vals='{{"message_id": "{message_id}", "file": "{file_to_change}", "summary": "{extraction_result}", "content": {json.dumps(new_content)}}}'
-                                    hx-target="closest .message-agent"
-                                    hx-swap="outerHTML"
-                                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3 rounded">
-                                Confirm & Stage to Dev
-                            </button>
+                            <form hx-post="/agent/confirm-stage" 
+                                  hx-target="closest .message-agent"
+                                  hx-swap="outerHTML"
+                                  class="flex-1">
+                                <input type="hidden" name="message_id" value="{message_id}">
+                                <input type="hidden" name="file" value="{file_to_change}">
+                                <input type="hidden" name="summary" value="{extraction_result}">
+                                <input type="hidden" name="content" value="{new_content.replace('"', '&quot;')}">
+                                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3 rounded">
+                                    Confirm & Stage to Dev
+                                </button>
+                            </form>
                             <button hx-post="/agent/discard"
                                     hx-target="closest .message-agent"
                                     hx-swap="outerHTML"
@@ -488,7 +493,13 @@ class ConfirmStageRequest(BaseModel):
     content: str
 
 @app.post("/agent/confirm-stage")
-async def confirm_stage(request: ConfirmStageRequest, user: str = Depends(get_iap_user)):
+async def confirm_stage(
+    message_id: str = Form(...),
+    file: str = Form(...),
+    summary: str = Form(...),
+    content: str = Form(...),
+    user: str = Depends(get_iap_user)
+):
     try:
         # 1. Perform Git-Ops Staging
         git_ops.sync_main()
@@ -496,13 +507,13 @@ async def confirm_stage(request: ConfirmStageRequest, user: str = Depends(get_ia
         branch_name = f"agent-update-{timestamp}"
         git_ops.create_content_branch(branch_name)
         
-        full_file_path = os.path.join(REPO_PATH, request.file)
+        full_file_path = os.path.join(REPO_PATH, file)
         os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
         
         with open(full_file_path, 'w', encoding='utf-8') as f:
-            f.write(request.content)
+            f.write(content)
         
-        git_ops.commit_and_push(f"Agent Update: {request.summary} (Requested by {user})")
+        git_ops.commit_and_push(f"Agent Update: {summary} (Requested by {user})")
         
         # Final Verification UI
         final_html = f"""
@@ -514,7 +525,7 @@ async def confirm_stage(request: ConfirmStageRequest, user: str = Depends(get_ia
             
             <div class="bg-white p-3 rounded border border-gray-300 mb-4 text-xs font-mono whitespace-pre-wrap">
 <b>Summary of Changes:</b>
-{request.summary}
+{summary}
             </div>
 
             <div class="flex flex-col space-y-3">
@@ -550,7 +561,7 @@ async def confirm_stage(request: ConfirmStageRequest, user: str = Depends(get_ia
             </div>
         </div>
         """
-        await chat_manager.update_message(request.message_id, final_html)
+        await chat_manager.update_message(message_id, final_html)
         return HTMLResponse(content=final_html)
     except Exception as e:
         return HTMLResponse(content=f"<div class='text-red-600'>Error: {str(e)}</div>")
