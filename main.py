@@ -484,7 +484,9 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
             
     except Exception as e:
         print(f"DEBUG: Deploy status error: {e}")
-        return HTMLResponse(content=f"<span class='text-gray-400'>Error: {str(e)[:10]}</span>")
+        # Return a more descriptive error for debugging
+        error_snippet = str(e)[:20].replace("'", "").replace('"', "")
+        return HTMLResponse(content=f"<span class='text-gray-400'>Error: {error_snippet}</span>")
 
 class ConfirmStageRequest(BaseModel):
     message_id: str
