@@ -67,6 +67,10 @@ class GitOps:
         """
         Commits changes to the feature branch and merges it into 'dev'.
         """
+        if not self.repo.is_dirty(untracked_files=True):
+            print("DEBUG: No changes detected. Skipping commit.")
+            return
+
         try:
             self.repo.remotes.origin.set_url(self._get_authenticated_url())
             

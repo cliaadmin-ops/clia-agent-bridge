@@ -122,15 +122,38 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             return
 
         await chat_manager.update_message(message_id, "Analyzing request...")
-        triage_prompt = f"Analyze intent (READ/WRITE), complexity (1-10), target. Message: {message}"
+        
+        # Load manifest for triage context
+        manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
+        manifest_content = "{}"
+        if os.path.exists(manifest_path):
+            with open(manifest_path, 'r') as f:
+                manifest_content = f.read()
+
+        triage_prompt = f"""
+        You are the CLIA Content Steward. 
+        Analyze the user's intent and the site manifest to determine if this is a READ (question) or WRITE (modification) request.
+        
+        Site Manifest: {manifest_content}
+        User Message: {message}
+        
+        Rules:
+        1. If the user asks to change, update, increment, fix, or modify ANY content (including version numbers, text, or data), intent MUST be 'WRITE'.
+        2. If the user asks a question about the site or board, intent is 'READ'.
+        3. Respond ONLY with a JSON object: {{"intent": "READ"|"WRITE", "complexity": 1-10, "target_file": "path/to/file"}}
+        """
+        
         triage_raw = get_gemini_response(triage_prompt, "gemini-3.1-flash-lite")
         try:
-            triage_json = json.loads(triage_raw.strip('`').replace('json\n', ''))
+            json_str = triage_raw.strip('`').replace('json\n', '')
+            triage_json = json.loads(json_str)
             intent = triage_json.get("intent", "READ")
             complexity = triage_json.get("complexity", 1)
+            file_to_change = triage_json.get("target_file")
         except:
             intent = "READ"
             complexity = 1
+            file_to_change = None
 
         model_to_use = "gemini-3.1-flash-lite" if complexity <= 3 else "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
         
@@ -143,41 +166,39 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                 diff_stat = git_ops.repo.git.diff('main..origin/dev', '--stat')
                 git_context = f"Baseline: main. Pending on dev: {diff_stat if diff_stat else 'None'}"
 
-                await chat_manager.update_message(message_id, "Identifying target files...")
+                await chat_manager.update_message(message_id, "Preparing staging plan...")
 
-                # 1. Identify the target file
-                manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
-                manifest_content = ""
-                if os.path.exists(manifest_path):
-                    with open(manifest_path, 'r') as f:
-                        manifest_content = f.read()
-
-                files_content = {}
-                files_list = []
-                for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
-                    for f in files:
-                        if f.endswith((".html", ".json")):
-                            rel_path = os.path.relpath(os.path.join(root, f), REPO_PATH)
-                            files_list.append(rel_path)
-                            if f.endswith(".html"):
-                                with open(os.path.join(root, f), 'r', encoding='utf-8') as file:
-                                    files_content[rel_path] = file.read(1000)
+                # 1. Identify/Verify the target file
+                if not file_to_change:
+                    # Fallback to walk if triage didn't pick it up
+                    files_list = []
+                    for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
+                        for f in files:
+                            if f.endswith((".html", ".json")):
+                                files_list.append(os.path.relpath(os.path.join(root, f), REPO_PATH))
+                    file_to_change = "public/index.html" # Default
                 
-                identify_prompt = f"Identify the file to modify. Site Manifest: {manifest_content}. Available Files: {json.dumps(files_content)}. Request: {message}"
-                file_to_change = get_gemini_response(identify_prompt, "gemini-3.1-flash-lite").strip().strip("'").strip('"')
-                
-                if file_to_change not in files_list:
-                    file_to_change = "public/index.html"
-                
-                await chat_manager.update_message(message_id, f"Reading {file_to_change}...")
                 full_path = os.path.join(REPO_PATH, file_to_change)
                 current_content = ""
                 if os.path.exists(full_path):
                     with open(full_path, 'r', encoding='utf-8') as f:
                         current_content = f.read()
 
-                await chat_manager.update_message(message_id, "Generating staging plan...")
-                staging_prompt = f"Modify {file_to_change}. Context: {git_context}. Request: {message}. Content: {current_content}"
+                staging_prompt = f"""
+                You are the CLIA Content Steward. 
+                Modify {file_to_change} based on the request.
+                
+                Context: {git_context}
+                Request: {message}
+                Current Content: 
+                {current_content}
+                
+                Respond ONLY with a JSON object:
+                {{
+                    "new_content": "FULL file content here",
+                    "summary": "Brief explanation of change"
+                }}
+                """
                 staging_raw = get_gemini_response(staging_prompt, "gemini-3-flash-preview")
                 
                 json_str = staging_raw
@@ -215,7 +236,17 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                 await chat_manager.release_lock(user)
         else:
             # READ Logic
-            query_prompt = f"Question: {message}. Context: {history_context}"
+            query_prompt = f"""
+            You are the CLIA Content Steward. 
+            Answer the user's question based on the site context.
+            
+            IMPORTANT: You are in READ-ONLY mode. You cannot modify files. 
+            If the user is asking for a change or update, you must inform them that you misclassified their intent 
+            and ask them to rephrase their request more clearly as a modification.
+            
+            Question: {message}
+            Context: {history_context}
+            """
             answer = get_gemini_response(query_prompt, model_to_use)
             final_html = f"<div class='message-agent p-3 rounded-lg max-w-[80%]'><div class='text-[10px] text-gray-400 mb-1 uppercase font-bold'>{model_to_use}</div>{answer}</div>"
             await chat_manager.update_message(message_id, final_html)
