@@ -151,6 +151,7 @@ class ChatHistoryManager:
             snapshot = await lock_ref.get()
             if snapshot.exists:
                 data = snapshot.to_dict()
+                print(f"DEBUG: Lock status: {data}, user: {user_email}")
                 now = time.time()
                 if data.get("locked") and data.get("user") != user_email:
                     if now - data.get("timestamp", 0) < (timeout_mins * 60):
