@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import requests
 import PyPDF2
 import docx
 from google import genai
@@ -444,17 +445,21 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
     try:
         token = git_ops._get_installation_token()
         repo_name = "cliaadmin-ops/clia-website"
-        # We need to find the deployment for the specific branch
-        url = f"https://api.github.com/repos/{repo_name}/deployments?per_page=10"
+        
+        # 1. Get recent deployments
+        url = f"https://api.github.com/repos/{repo_name}/deployments?per_page=15"
         headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github+json",
         }
         
         resp = requests.get(url, headers=headers)
+        if resp.status_code != 200:
+            return HTMLResponse(content=f"<span class='text-gray-400'>API Error ({resp.status_code})</span>")
+            
         deployments = resp.json()
         
-        # Filter for the branch we care about
+        # 2. Find the latest deployment for this branch
         branch_deployment = None
         for d in deployments:
             if d.get("ref") == branch:
@@ -462,9 +467,8 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
                 break
         
         if not branch_deployment:
-            # Fallback: if no deployment for branch, check if it's 'main' or 'dev'
-            # Cloud Run CD sometimes labels deployments differently
-            return HTMLResponse(content="<span class='text-gray-400'>No Deploy Found</span>")
+            # If it's a fresh push, GitHub might take a few seconds to create the deployment object
+            return HTMLResponse(content="<span class='text-blue-400 animate-pulse'>Initializing...</span>")
             
         deployment_id = branch_deployment["id"]
         status_url = f"https://api.github.com/repos/{repo_name}/deployments/{deployment_id}/statuses?per_page=1"
@@ -472,21 +476,27 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
         statuses = status_resp.json()
         
         if not statuses:
-            return HTMLResponse(content="<span class='text-yellow-500 animate-pulse'>Pending...</span>")
+            return HTMLResponse(content="<span class='text-yellow-500 animate-pulse'>Building...</span>")
             
         state = statuses[0]["state"]
-        if state == "success":
-            return HTMLResponse(content="<span class='text-green-600 font-bold'>● Live</span>")
-        elif state == "failure" or state == "error":
-            return HTMLResponse(content="<span class='text-red-600 font-bold'>● Failed</span>")
-        else:
-            return HTMLResponse(content=f"<span class='text-yellow-500 animate-pulse'>● {state.capitalize()}</span>")
+        # Map GitHub states to user-friendly labels
+        state_map = {
+            "success": ("● Live", "bg-green-100 text-green-700"),
+            "failure": ("● Failed", "bg-red-100 text-red-700"),
+            "error": ("● Error", "bg-red-100 text-red-700"),
+            "pending": ("● Building...", "bg-yellow-100 text-yellow-700 animate-pulse"),
+            "in_progress": ("● Deploying...", "bg-yellow-100 text-yellow-700 animate-pulse"),
+            "queued": ("● Queued", "bg-gray-100 text-gray-600 animate-pulse"),
+            "waiting": ("● Waiting", "bg-gray-100 text-gray-600 animate-pulse")
+        }
+        
+        label, css_class = state_map.get(state, (f"● {state.capitalize()}", "bg-gray-100 text-gray-600"))
+        return HTMLResponse(content=f"<span class='status-pill {css_class}'>{label}</span>")
             
     except Exception as e:
         print(f"DEBUG: Deploy status error: {e}")
-        # Return a more descriptive error for debugging
-        error_snippet = str(e)[:20].replace("'", "").replace('"', "")
-        return HTMLResponse(content=f"<span class='text-gray-400'>Error: {error_snippet}</span>")
+        error_msg = str(e).replace("'", "").replace('"', "")
+        return HTMLResponse(content=f"<span class='status-pill bg-gray-100 text-gray-400' title='{error_msg}'>Status Error</span>")
 
 class ConfirmStageRequest(BaseModel):
     message_id: str
@@ -531,17 +541,17 @@ async def confirm_stage(
             </div>
 
             <div class="flex flex-col space-y-3">
-                <div class="flex items-center space-x-2">
-                    <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">
-                        Step 1: Verify on Dev Site
-                    </a>
-                    <div id="dev-deploy-status" 
-                         hx-get="/agent/deploy-status?branch=dev" 
-                         hx-trigger="load, every 10s"
-                         class="text-[10px] font-bold uppercase px-2 py-1 rounded bg-gray-100 text-gray-500">
-                        Checking...
+                    <div class="flex items-center space-x-2">
+                        <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">
+                            Step 1: Verify on Dev Site
+                        </a>
+                        <div id="dev-deploy-status" 
+                             hx-get="/agent/deploy-status?branch=dev" 
+                             hx-trigger="load, every 10s"
+                             class="status-pill bg-gray-100 text-gray-500">
+                            Checking...
+                        </div>
                     </div>
-                </div>
                 
                 <div class="border-t border-blue-200 pt-3">
                     <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
@@ -625,7 +635,7 @@ async def approve_update(branch: str, user: str = Depends(get_iap_user)):
                 <div id="prod-deploy-status" 
                      hx-get="/agent/deploy-status?branch=main" 
                      hx-trigger="load, every 10s"
-                     class="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white border border-green-200 text-green-600">
+                     class="status-pill bg-white border border-green-200 text-green-600">
                     Checking Prod...
                 </div>
                 <button hx-post="/agent/revert" hx-target="closest .message-agent" class="text-[10px] text-red-600 underline">Undo (Revert Main)</button>
