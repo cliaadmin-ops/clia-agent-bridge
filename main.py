@@ -339,7 +339,7 @@ async def chat_endpoint(
         response_html = f"""
         <div class="message-user p-3 rounded-lg max-w-[80%]">
             {message}
-            {"<br><i class='text-xs'>(File attached: " + file.filename + ")</i>" if file and file.filename else ""}
+            {"<br><i class='text-xs'>(File attached: " + getattr(file, 'filename', getattr(file, 'name', 'Unknown')) + ")</i>" if file else ""}
         </div>
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
             <div class="flex justify-between items-start mb-2">
