@@ -3,8 +3,8 @@ import json
 import time
 import PyPDF2
 import docx
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+from google import genai
+from google.genai import types
 from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Header, Request, Form
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -51,24 +51,34 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# Initialize Vertex AI
-# We will force the project ID to clia-web-prod to match the IAM settings
+# Initialize Gemini Enterprise Agent Platform Client
 PROJECT_ID = "clia-web-prod"
 LOCATION = "us-central1"
-vertexai.init(project=PROJECT_ID, location=LOCATION)
-print(f"DEBUG: Vertex AI initialized for project: {PROJECT_ID} in {LOCATION}")
+
+# The genai.Client will pick up default credentials from the environment in Cloud Run
+client = genai.Client(
+    vertexai=True,
+    project=PROJECT_ID,
+    location=LOCATION
+)
+print(f"DEBUG: Gemini Enterprise Agent Platform initialized for project: {PROJECT_ID} in {LOCATION}")
 
 def get_gemini_response(prompt: str, model_name: str = "gemini-3.1-flash-lite", contents: list = None) -> str:
     try:
-        model = GenerativeModel(model_name)
         if contents:
-            # contents is a list of parts (text, PDF, etc.)
-            response = model.generate_content(contents)
+            # contents is a list of parts or strings
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents
+            )
         else:
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
         return response.text.strip()
     except Exception as e:
-        error_msg = f"Vertex AI Error ({model_name}): {str(e)}"
+        error_msg = f"Agent Platform Error ({model_name}): {str(e)}"
         print(error_msg)
         return f"ERROR: {error_msg}"
 
@@ -189,7 +199,7 @@ async def chat_endpoint(
 
         # Extraction & Staging Logic
         extraction_parts = [
-            Part.from_text(f"""
+            f"""
             You are the CLIA Website Agent. 
             Target: {triage_json.get('target', 'general')}
             
@@ -199,15 +209,17 @@ async def chat_endpoint(
             User Message: {message}
             
             Analyze the request and provide a summary of the proposed changes.
-            """)
+            """
         ]
         
         if doc_bytes and file.filename.endswith(".pdf"):
-            extraction_parts.append(Part.from_data(data=doc_bytes, mime_type="application/pdf"))
+            extraction_parts.append(
+                types.Part.from_bytes(data=doc_bytes, mime_type="application/pdf")
+            )
         elif doc_bytes:
             # Fallback for non-PDF files (treat as text if possible)
             try:
-                extraction_parts.append(Part.from_text(f"Document Content: {doc_bytes.decode('utf-8')}"))
+                extraction_parts.append(f"Document Content: {doc_bytes.decode('utf-8')}")
             except:
                 pass
 
