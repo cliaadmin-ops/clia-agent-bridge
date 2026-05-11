@@ -101,6 +101,18 @@ class GitOps:
 
     def merge_to_main(self, branch_name):
         self.repo.remotes.origin.set_url(self._get_authenticated_url())
+        
+        # Ensure the branch exists locally and is up to date
+        self.repo.remotes.origin.fetch()
+        
+        # Check if the branch exists locally, if not, track it from remote
+        try:
+            self.repo.git.checkout(branch_name)
+            self.repo.remotes.origin.pull()
+        except GitCommandError:
+            # If checkout fails, try to track the remote branch
+            self.repo.git.checkout('-b', branch_name, f'origin/{branch_name}')
+
         self.repo.git.checkout('main')
         self.repo.remotes.origin.pull()
         self.repo.git.merge(branch_name)
