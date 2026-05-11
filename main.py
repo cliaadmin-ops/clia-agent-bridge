@@ -658,7 +658,7 @@ async def discard_update(user: str = Depends(get_iap_user)):
         if success:
             return HTMLResponse(content="""
             <div class='message-agent p-3 rounded-lg max-w-[80%] bg-gray-50 border border-gray-200'>
-                <p class='text-xs italic text-gray-600'>Update discarded. <b>Dev Site</b> has been reset to match Production.</p>
+                <p class='text-xs italic text-gray-600'>Update discarded. The changes have been surgically reverted on the <b>Dev Site</b>.</p>
             </div>
             """)
         else:
