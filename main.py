@@ -481,8 +481,8 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
         
         # 4. Parse Knative Service Status
         status_data = data.get("status", {})
-        latest_created = status_data.get("latestCreatedRevisionName")
-        latest_ready = status_data.get("latestReadyRevisionName")
+        observed_generation = status_data.get("observedGeneration")
+        metadata_generation = data.get("metadata", {}).get("generation")
         
         # We look for the 'Ready' condition
         conditions = status_data.get("conditions", [])
@@ -493,16 +493,19 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
             
         status = ready_condition.get("status") # "True", "False", or "Unknown"
         reason = ready_condition.get("reason", "")
+        message = ready_condition.get("message", "")
         
-        # CRITICAL FIX: If created != ready, it is actively deploying a NEW revision.
-        # We must show "Deploying" even if the 'Ready' condition is still True (from the OLD revision).
-        if latest_created != latest_ready:
-            return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Deploying...</span>")
+        # CRITICAL FIX: Use 'generation' to detect in-progress updates.
+        # If observedGeneration < metadata.generation, Cloud Run hasn't even started 
+        # processing the new spec yet.
+        # If status is "Unknown", it is actively deploying.
+        if (observed_generation is not None and metadata_generation is not None and observed_generation < metadata_generation) or status == "Unknown":
+            return HTMLResponse(content=f"<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse' title='{message}'>● Deploying...</span>")
 
         if status == "True":
             return HTMLResponse(content="<span class='status-pill bg-green-100 text-green-700'>● Live</span>")
         elif status == "False":
-            return HTMLResponse(content=f"<span class='status-pill bg-red-100 text-red-700' title='{reason}'>● Failed</span>")
+            return HTMLResponse(content=f"<span class='status-pill bg-red-100 text-red-700' title='{reason}: {message}'>● Failed</span>")
         else:
             return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Deploying...</span>")
             
