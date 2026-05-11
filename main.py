@@ -468,7 +468,8 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
     try:
         token = git_ops._get_installation_token()
         repo_name = "cliaadmin-ops/clia-website"
-        url = f"https://api.github.com/repos/{repo_name}/deployments?ref={branch}&per_page=1"
+        # We need to find the deployment for the specific branch
+        url = f"https://api.github.com/repos/{repo_name}/deployments?per_page=10"
         headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github+json",
@@ -477,10 +478,19 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
         resp = requests.get(url, headers=headers)
         deployments = resp.json()
         
-        if not deployments:
-            return HTMLResponse(content="<span class='text-gray-400'>No Deploy</span>")
+        # Filter for the branch we care about
+        branch_deployment = None
+        for d in deployments:
+            if d.get("ref") == branch:
+                branch_deployment = d
+                break
+        
+        if not branch_deployment:
+            # Fallback: if no deployment for branch, check if it's 'main' or 'dev'
+            # Cloud Run CD sometimes labels deployments differently
+            return HTMLResponse(content="<span class='text-gray-400'>No Deploy Found</span>")
             
-        deployment_id = deployments[0]["id"]
+        deployment_id = branch_deployment["id"]
         status_url = f"https://api.github.com/repos/{repo_name}/deployments/{deployment_id}/statuses?per_page=1"
         status_resp = requests.get(status_url, headers=headers)
         statuses = status_resp.json()
@@ -497,6 +507,7 @@ async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
             return HTMLResponse(content=f"<span class='text-yellow-500 animate-pulse'>● {state.capitalize()}</span>")
             
     except Exception as e:
+        print(f"DEBUG: Deploy status error: {e}")
         return HTMLResponse(content=f"<span class='text-gray-400'>Error: {str(e)[:10]}</span>")
 
 @app.post("/agent/update")
