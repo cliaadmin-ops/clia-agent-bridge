@@ -4,6 +4,8 @@ import time
 import requests
 import PyPDF2
 import docx
+import google.auth
+import google.auth.transport.requests
 from google import genai
 from google.genai import types
 from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Header, Request, Form, BackgroundTasks
@@ -452,64 +454,54 @@ async def chat_endpoint(
 @app.get("/agent/deploy-status")
 async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
     """
-    Checks the GitHub deployment status for a branch.
-    Since we use Cloud Run CD, we check the 'deployments' API.
+    Checks the Cloud Run service status directly via the Google Cloud API.
+    This avoids GitHub 403 issues and shows the actual deployment state.
     """
     try:
-        token = git_ops._get_installation_token()
-        repo_name = "cliaadmin-ops/clia-website"
+        # 1. Determine the service name based on the branch
+        service_name = "clia-dev" if branch == "dev" else "clia-website"
+        project_id = "clia-web-prod"
+        region = "us-east1"
         
-        # 1. Get recent deployments
-        url = f"https://api.github.com/repos/{repo_name}/deployments?per_page=15"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        }
+        # 2. Get Google Auth Token
+        credentials, _ = google.auth.default()
+        auth_request = google.auth.transport.requests.Request()
+        credentials.refresh(auth_request)
+        token = credentials.token
+        
+        # 3. Query Cloud Run Admin API
+        url = f"https://{region}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/{project_id}/services/{service_name}"
+        headers = {"Authorization": f"Bearer {token}"}
         
         resp = requests.get(url, headers=headers)
         if resp.status_code != 200:
-            return HTMLResponse(content=f"<span class='text-gray-400'>API Error ({resp.status_code})</span>")
+            return HTMLResponse(content=f"<span class='status-pill bg-gray-100 text-gray-400'>Status Error ({resp.status_code})</span>")
             
-        deployments = resp.json()
+        data = resp.json()
         
-        # 2. Find the latest deployment for this branch
-        branch_deployment = None
-        for d in deployments:
-            if d.get("ref") == branch:
-                branch_deployment = d
-                break
+        # 4. Parse Knative Service Status
+        # We look for the 'Ready' condition
+        conditions = data.get("status", {}).get("conditions", [])
+        ready_condition = next((c for c in conditions if c["type"] == "Ready"), None)
         
-        if not branch_deployment:
-            # If it's a fresh push, GitHub might take a few seconds to create the deployment object
-            return HTMLResponse(content="<span class='text-blue-400 animate-pulse'>Initializing...</span>")
+        if not ready_condition:
+            return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Initializing</span>")
             
-        deployment_id = branch_deployment["id"]
-        status_url = f"https://api.github.com/repos/{repo_name}/deployments/{deployment_id}/statuses?per_page=1"
-        status_resp = requests.get(status_url, headers=headers)
-        statuses = status_resp.json()
+        status = ready_condition.get("status") # "True", "False", or "Unknown"
+        reason = ready_condition.get("reason", "")
         
-        if not statuses:
-            return HTMLResponse(content="<span class='text-yellow-500 animate-pulse'>Building...</span>")
-            
-        state = statuses[0]["state"]
-        # Map GitHub states to user-friendly labels
-        state_map = {
-            "success": ("● Live", "bg-green-100 text-green-700"),
-            "failure": ("● Failed", "bg-red-100 text-red-700"),
-            "error": ("● Error", "bg-red-100 text-red-700"),
-            "pending": ("● Building...", "bg-yellow-100 text-yellow-700 animate-pulse"),
-            "in_progress": ("● Deploying...", "bg-yellow-100 text-yellow-700 animate-pulse"),
-            "queued": ("● Queued", "bg-gray-100 text-gray-600 animate-pulse"),
-            "waiting": ("● Waiting", "bg-gray-100 text-gray-600 animate-pulse")
-        }
-        
-        label, css_class = state_map.get(state, (f"● {state.capitalize()}", "bg-gray-100 text-gray-600"))
-        return HTMLResponse(content=f"<span class='status-pill {css_class}'>{label}</span>")
+        if status == "True":
+            return HTMLResponse(content="<span class='status-pill bg-green-100 text-green-700'>● Live</span>")
+        elif status == "False":
+            return HTMLResponse(content=f"<span class='status-pill bg-red-100 text-red-700' title='{reason}'>● Failed</span>")
+        else:
+            # status == "Unknown" usually means a deployment is in progress
+            return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Deploying...</span>")
             
     except Exception as e:
-        print(f"DEBUG: Deploy status error: {e}")
-        error_msg = str(e).replace("'", "").replace('"', "")
-        return HTMLResponse(content=f"<span class='status-pill bg-gray-100 text-gray-400' title='{error_msg}'>Status Error</span>")
+        print(f"DEBUG: Cloud Run status error: {e}")
+        return HTMLResponse(content="<span class='status-pill bg-gray-100 text-gray-400'>Status Error</span>")
+
 
 class ConfirmStageRequest(BaseModel):
     message_id: str
