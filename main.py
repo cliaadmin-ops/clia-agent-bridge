@@ -53,7 +53,7 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 # Initialize Gemini Enterprise Agent Platform Client
 PROJECT_ID = "clia-web-prod"
-LOCATION = "us-central1"
+LOCATION = "global"
 
 # The genai.Client will pick up default credentials from the environment in Cloud Run
 client = genai.Client(
