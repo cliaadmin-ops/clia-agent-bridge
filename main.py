@@ -141,8 +141,30 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             git_context = f"Baseline: main. Pending on dev: {diff_stat if diff_stat else 'None'}"
 
             await chat_manager.update_message(message_id, "Identifying target files...")
-            # (File identification logic simplified for brevity in this refactor)
-            file_to_change = "public/index.html" # Placeholder
+            
+            # 1. Identify the target file
+            manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
+            manifest_content = ""
+            if os.path.exists(manifest_path):
+                with open(manifest_path, 'r') as f:
+                    manifest_content = f.read()
+
+            files_content = {}
+            files_list = []
+            for root, dirs, files in os.walk(os.path.join(REPO_PATH, "public")):
+                for f in files:
+                    if f.endswith((".html", ".json")):
+                        rel_path = os.path.relpath(os.path.join(root, f), REPO_PATH)
+                        files_list.append(rel_path)
+                        if f.endswith(".html"):
+                            with open(os.path.join(root, f), 'r', encoding='utf-8') as file:
+                                files_content[rel_path] = file.read(1000)
+            
+            identify_prompt = f"Identify the file to modify. Site Manifest: {manifest_content}. Available Files: {json.dumps(files_content)}. Request: {message}"
+            file_to_change = get_gemini_response(identify_prompt, "gemini-3.1-flash-lite").strip().strip("'").strip('"')
+            
+            if file_to_change not in files_list:
+                file_to_change = "public/index.html"
             
             await chat_manager.update_message(message_id, f"Reading {file_to_change}...")
             full_path = os.path.join(REPO_PATH, file_to_change)
@@ -176,7 +198,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                                 <input type="hidden" name="content" value="{new_content.replace('"', '&quot;')}">
                                 <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3 rounded">Confirm & Stage</button>
                             </form>
-                            <button hx-post="/agent/discard" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-2 px-3 rounded">Discard</button>
+                            <button hx-post="/agent/discard" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Discard</button>
                         </div>
                     </div>
                     """
@@ -201,13 +223,26 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
         await chat_manager.release_lock(user)
 
 @app.post("/agent/chat")
-async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, message: str = Form(...), file: Optional[UploadFile] = File(None), user: str = Depends(get_iap_user)):
+async def chat_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    message: str = Form(...),
+    file: Optional[UploadFile] = File(None),
+    user: str = Depends(get_iap_user)
+):
+    # Check persistent lock
     lock_status = await chat_manager.is_locked(user)
     if lock_status["locked"]:
-        return HTMLResponse(content=f"<div class='message-agent p-3 rounded-lg max-w-[80%] bg-yellow-50 border border-yellow-200'><p class='text-sm text-yellow-800'><b>Agent Busy:</b> {lock_status['user']} is staging an update.</p></div>")
-    
+        return HTMLResponse(content=f"""
+        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-yellow-50 border border-yellow-200">
+            <p class="text-sm text-yellow-800"><b>Agent Busy:</b> {lock_status['user']} is staging an update. Please try again in a few minutes.</p>
+        </div>
+        """)
+
+    # Retrieve persistent chat history
     history = await chat_manager.get_recent_messages(user, limit=10)
     history_context = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+
     doc_bytes = parse_document(file) if file and file.filename else None
     await chat_manager.save_message(user, "user", message)
     message_id = await chat_manager.save_message(user, "assistant", "Processing...")
@@ -311,6 +346,11 @@ async def revert_update(user: str = Depends(get_iap_user)):
         new_sha = git_ops.revert_main()
         return HTMLResponse(content=f"<div class='message-agent p-3 rounded-lg max-w-[80%] bg-orange-50 border border-orange-200'><p class='text-sm text-orange-800'><b>Reverted.</b> New HEAD: {new_sha[:7]}</p></div>")
     except Exception as e: return HTMLResponse(content=f"<div class='text-red-600'>Revert failed: {e}</div>")
+
+@app.post("/agent/unlock")
+async def force_unlock(user: str = Depends(get_iap_user)):
+    await chat_manager.release_lock(user)
+    return {"status": "success", "message": "Agent manually unlocked."}
 
 @app.post("/agent/clear")
 async def clear_chat_history(user: str = Depends(get_iap_user)):
