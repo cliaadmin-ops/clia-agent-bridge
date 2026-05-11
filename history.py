@@ -94,3 +94,68 @@ class ChatHistoryManager:
             print(f"DEBUG: Cleared history for {user_email}")
         except Exception as e:
             print(f"Error clearing history: {e}")
+
+    async def acquire_lock(self, user_email: str, timeout_mins: int = 10) -> bool:
+        """
+        Attempts to acquire the global agent lock in Firestore.
+        """
+        try:
+            lock_ref = db.collection("system").document("agent_lock")
+            
+            # Use a transaction to ensure atomic lock acquisition
+            @firestore.async_transactional
+            async def _transactional_lock(transaction):
+                snapshot = await lock_ref.get(transaction=transaction)
+                now = time.time()
+                
+                if snapshot.exists:
+                    data = snapshot.to_dict()
+                    # Check if lock is held by someone else and not expired
+                    if data.get("locked") and data.get("user") != user_email:
+                        if now - data.get("timestamp", 0) < (timeout_mins * 60):
+                            return False
+                
+                # Acquire or renew lock
+                transaction.set(lock_ref, {
+                    "locked": True,
+                    "user": user_email,
+                    "timestamp": now
+                })
+                return True
+
+            return await _transactional_lock(db.transaction())
+        except Exception as e:
+            print(f"Error acquiring lock: {e}")
+            return False
+
+    async def release_lock(self, user_email: str):
+        """
+        Releases the global agent lock if held by the user.
+        """
+        try:
+            lock_ref = db.collection("system").document("agent_lock")
+            snapshot = await lock_ref.get()
+            if snapshot.exists:
+                data = snapshot.to_dict()
+                if data.get("user") == user_email:
+                    await lock_ref.update({"locked": False})
+        except Exception as e:
+            print(f"Error releasing lock: {e}")
+
+    async def is_locked(self, user_email: str, timeout_mins: int = 10) -> Dict:
+        """
+        Checks if the agent is currently locked by another user.
+        """
+        try:
+            lock_ref = db.collection("system").document("agent_lock")
+            snapshot = await lock_ref.get()
+            if snapshot.exists:
+                data = snapshot.to_dict()
+                now = time.time()
+                if data.get("locked") and data.get("user") != user_email:
+                    if now - data.get("timestamp", 0) < (timeout_mins * 60):
+                        return {"locked": True, "user": data.get("user")}
+            return {"locked": False}
+        except Exception as e:
+            print(f"Error checking lock: {e}")
+            return {"locked": False}
