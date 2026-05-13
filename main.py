@@ -460,9 +460,12 @@ async def get_deploy_status(branch: str, version: Optional[str] = None, user: st
                     live_version = str(v_resp.json().get("version"))
                     if live_version != str(version):
                         return HTMLResponse(content="<span class='status-pill status-pulse-orange'>● Propagating</span>")
+                else:
+                    # If version.json is missing but we expect it, we are still propagating
+                    return HTMLResponse(content="<span class='status-pill status-pulse-orange'>● Initializing</span>")
             except Exception:
-                # If site is down or version.json missing, fall back to Cloud Run status
-                pass
+                # If site is down, we are definitely not live
+                return HTMLResponse(content="<span class='status-pill status-pulse-blue'>● Connecting</span>")
 
         # 6. Final Ready Check
         ready_cond = next((c for c in status_data.get("conditions", []) if c["type"] == "Ready"), None)
@@ -526,13 +529,11 @@ async def confirm_stage(
                 </div>
                 <div class="border-t border-blue-200 pt-3">
                     <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
-                    <div class="flex space-x-2">
                         <button hx-post="/agent/approve?branch={branch_name}&message_id={message_id}&version={commit_ts}" hx-target="closest .message-agent" hx-swap="outerHTML" class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">Approve & Push</button>
                         <form hx-post="/agent/rollback-dev" hx-target="closest .message-agent" hx-swap="outerHTML">
                             <input type="hidden" name="message_id" value="{message_id}">
                             <button type="submit" class="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold py-1 px-3 rounded">Undo Last</button>
                         </form>
-                        <button hx-post="/agent/discard" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Reset Dev</button>
                     </div>
                 </div>
             </div>

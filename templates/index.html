@@ -128,6 +128,7 @@
             const savedHistory = localStorage.getItem('clia_chat_history');
             if (savedHistory) {
                 chatHistory.innerHTML = savedHistory;
+                htmx.process(chatHistory);
                 chatHistory.scrollTop = chatHistory.scrollHeight;
             }
         });
