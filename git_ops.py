@@ -183,24 +183,28 @@ class GitOps:
 
     def revert_main(self):
         """
-        Rolls back the last commit on 'main' using an atomic remote push.
+        Rolls back the last commit on BOTH 'main' and 'dev' using atomic remote pushes.
+        This ensures that a production rollback also clears the staging branch.
         """
         try:
             self.repo.remotes.origin.set_url(self._get_authenticated_url())
+            
+            # 1. Revert Main
             self.repo.remotes.origin.fetch('main')
-            
-            # Capture the SHA we are reverting FROM for logging
-            old_sha = self.repo.git.rev_parse('origin/main')
-            
             self.repo.git.push('origin', 'origin/main~1:main', force_with_lease=True)
-            
             self.repo.git.checkout('main')
             self.repo.git.reset('--hard', 'origin/main')
-            
             new_sha = self.repo.git.rev_parse('HEAD')
+
+            # 2. Revert Dev (to keep it in sync with the rolled-back main)
+            self.repo.remotes.origin.fetch('dev')
+            self.repo.git.push('origin', 'origin/dev~1:dev', force_with_lease=True)
+            self.repo.git.checkout('dev')
+            self.repo.git.reset('--hard', 'origin/dev')
+            
             return new_sha
         except Exception as e:
-            print(f"DEBUG: Failed to revert main: {e}")
+            print(f"DEBUG: Failed to revert production: {e}")
             raise e
 
     def get_dev_url(self):
