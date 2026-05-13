@@ -7,6 +7,7 @@ import PyPDF2
 import docx
 import google.auth
 import google.auth.transport.requests
+from pathlib import Path
 from google import genai
 from google.genai import types
 from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Header, Request, Form, BackgroundTasks
@@ -54,6 +55,27 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 PROJECT_ID = "clia-web-prod"
 LOCATION = "global"
 client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+
+def get_safe_path(repo_path: str, file_path: str) -> Path:
+    """
+    Unifies path resolution across all gates.
+    Ensures files are always read/written within the 'public' directory.
+    Handles leading slashes and 'public/' prefixes gracefully.
+    """
+    base = Path(repo_path).resolve()
+    # Remove leading slash and redundant 'public/' prefix
+    clean_path = file_path.lstrip('/')
+    if clean_path.startswith('public/'):
+        clean_path = clean_path[7:]
+    
+    # Force into public/ subdirectory
+    final_path = (base / "public" / clean_path).resolve()
+    
+    # Security check: Ensure we haven't escaped the repo
+    if not str(final_path).startswith(str(base)):
+        raise ValueError(f"Path escape detected: {file_path}")
+        
+    return final_path
 
 def get_gemini_response(prompt: str, model_name: str = "gemini-3.1-flash-lite", contents: list = None) -> str:
     try:
@@ -179,11 +201,10 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                                 files_list.append(os.path.relpath(os.path.join(root, f), REPO_PATH))
                     file_to_change = "public/index.html" # Default
                 
-                full_path = os.path.join(REPO_PATH, file_to_change)
+                full_path = get_safe_path(REPO_PATH, file_to_change)
                 current_content = ""
-                if os.path.exists(full_path):
-                    with open(full_path, 'r', encoding='utf-8') as f:
-                        current_content = f.read()
+                if full_path.exists():
+                    current_content = full_path.read_text(encoding='utf-8')
 
                 staging_prompt = f"""
                 You are the CLIA Content Steward. 
@@ -341,18 +362,12 @@ async def confirm_stage(
         git_ops.sync_main()
         branch_name = git_ops.create_content_branch(f"update-{int(time.time())}")
         
-        # Manifest paths often start with / and are relative to the 'public' folder
-        # We need to ensure they are joined correctly to REPO_PATH/public
-        rel_path = file.lstrip('/')
-        if not rel_path.startswith('public/'):
-            full_path = os.path.normpath(os.path.join(REPO_PATH, "public", rel_path))
-        else:
-            full_path = os.path.normpath(os.path.join(REPO_PATH, rel_path))
+        full_path = get_safe_path(REPO_PATH, file)
             
         print(f"DEBUG: confirm_stage - Final Full Path: {full_path}")
         
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        with open(full_path, 'w', encoding='utf-8') as f: f.write(content)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content, encoding='utf-8')
         
         pushed = git_ops.commit_and_push(f"Agent Update: {summary} (Requested by {user})")
         
