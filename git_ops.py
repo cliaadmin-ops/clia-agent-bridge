@@ -159,5 +159,49 @@ class GitOps:
             print(f"DEBUG: Failed to discard dev changes: {e}")
             return False
 
+    def revert_dev(self):
+        """
+        Rolls back the last commit on 'dev' using an atomic remote push.
+        Uses force-with-lease to prevent accidental overwrites if the remote moved.
+        """
+        try:
+            self.repo.remotes.origin.set_url(self._get_authenticated_url())
+            # Fetch latest to ensure origin/dev is current
+            self.repo.remotes.origin.fetch('dev')
+            
+            # Atomic move: push the parent of origin/dev to dev
+            # This effectively "undos" the last commit on the remote
+            self.repo.git.push('origin', 'origin/dev~1:dev', force_with_lease=True)
+            
+            # Sync local state
+            self.repo.git.checkout('dev')
+            self.repo.git.reset('--hard', 'origin/dev')
+            return True
+        except Exception as e:
+            print(f"DEBUG: Failed to revert dev: {e}")
+            return False
+
+    def revert_main(self):
+        """
+        Rolls back the last commit on 'main' using an atomic remote push.
+        """
+        try:
+            self.repo.remotes.origin.set_url(self._get_authenticated_url())
+            self.repo.remotes.origin.fetch('main')
+            
+            # Capture the SHA we are reverting FROM for logging
+            old_sha = self.repo.git.rev_parse('origin/main')
+            
+            self.repo.git.push('origin', 'origin/main~1:main', force_with_lease=True)
+            
+            self.repo.git.checkout('main')
+            self.repo.git.reset('--hard', 'origin/main')
+            
+            new_sha = self.repo.git.rev_parse('HEAD')
+            return new_sha
+        except Exception as e:
+            print(f"DEBUG: Failed to revert main: {e}")
+            raise e
+
     def get_dev_url(self):
         return "https://clia-dev-378290023292.us-east1.run.app"

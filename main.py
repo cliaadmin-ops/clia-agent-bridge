@@ -137,6 +137,48 @@ async def get_status(message_id: str, user: str = Depends(get_iap_user)):
     </div>
     """)
 
+async def rollback_dev_worker(user: str, message_id: str):
+    try:
+        # Perform rollback
+        success = git_ops.revert_dev()
+        if not success:
+            await chat_manager.update_message(message_id, "Error: Rollback failed.")
+            await chat_manager.release_lock(user)
+            return
+
+        await chat_manager.update_message(message_id, "Rollback successful. Analyzing what went wrong...")
+
+        # Get history for context
+        history = await chat_manager.get_recent_messages(user, limit=5)
+        history_context = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+
+        # Generate follow-up question
+        prompt = f"""
+        You are the CLIA Content Steward. 
+        The user just rolled back your last change to the dev site.
+        
+        Context of previous interaction:
+        {history_context}
+        
+        Acknowledge the rollback and ask 1-2 specific questions to understand what was wrong with the change 
+        so you can fix it. Be helpful and professional.
+        """
+        
+        question = get_gemini_response(prompt, "gemini-3.1-flash-lite")
+        
+        final_html = f"""
+        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-orange-50 border border-orange-200">
+            <p class="text-sm text-orange-800 mb-2"><b>Rollback Complete.</b> The dev site has been restored to its previous state.</p>
+            <div class="text-sm">{question}</div>
+        </div>
+        """
+        await chat_manager.update_message(message_id, final_html)
+    except Exception as e:
+        print(f"Rollback Worker Error: {e}")
+        await chat_manager.update_message(message_id, f"System Error during rollback: {e}")
+    finally:
+        await chat_manager.release_lock(user)
+
 async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], message_id: str, history_context: str):
     try:
         # Acquire Persistent Lock
@@ -395,7 +437,11 @@ async def confirm_stage(
                     <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
                     <div class="flex space-x-2">
                         <button hx-post="/agent/approve?branch={branch_name}" hx-target="closest .message-agent" hx-swap="outerHTML" class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">Approve & Push</button>
-                        <button hx-post="/agent/discard" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Discard</button>
+                        <form hx-post="/agent/rollback-dev" hx-target="closest .message-agent" hx-swap="outerHTML">
+                            <input type="hidden" name="message_id" value="{message_id}">
+                            <button type="submit" class="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold py-1 px-3 rounded">Undo Last</button>
+                        </form>
+                        <button hx-post="/agent/discard" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Reset Dev</button>
                     </div>
                 </div>
             </div>
@@ -404,6 +450,21 @@ async def confirm_stage(
         await chat_manager.update_message(message_id, final_html)
         return HTMLResponse(content=final_html)
     except Exception as e: return HTMLResponse(content=f"<div class='text-red-600'>Error: {e}</div>")
+
+@app.post("/agent/rollback-dev")
+async def rollback_dev_endpoint(
+    background_tasks: BackgroundTasks,
+    message_id: str = Form(...),
+    user: str = Depends(get_iap_user)
+):
+    background_tasks.add_task(rollback_dev_worker, user, message_id)
+    return HTMLResponse(content=f"""
+    <div class="message-agent p-3 rounded-lg max-w-[80%] bg-orange-50 border border-orange-200"
+         id="status-container-{message_id}"
+         hx-get="/agent/status/{message_id}" hx-trigger="every 2s" hx-swap="outerHTML">
+        <p class="text-sm text-orange-800 animate-pulse">● Rolling back dev site...</p>
+    </div>
+    """)
 
 @app.post("/agent/approve")
 async def approve_update(branch: str, user: str = Depends(get_iap_user)):
