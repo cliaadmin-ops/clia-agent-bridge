@@ -3,23 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CLIA Agent Switchboard</title>
+    <title>CLIA Agent Switchboard v2.0</title>
+    
+    <!-- CDNs -->
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <link href="/static/css/tailwind.min.css" rel="stylesheet">
-    <style>
-        .chat-container {
-            height: calc(100vh - 180px);
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        navy: '#1e3a8a',
+                        teal: '#0d9488',
+                        slate: '#f8fafc',
+                        sunset: '#f97316',
+                    },
+                    backdropBlur: {
+                        xs: '2px',
+                    }
+                }
+            }
         }
-        .message-user {
-            background-color: #3b82f6;
-            color: white;
-            align-self: flex-end;
+    </script>
+
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .glass {
+                @apply bg-white/70 backdrop-blur-md border border-white/20 shadow-xl;
+            }
+            .glass-dark {
+                @apply bg-navy/80 backdrop-blur-lg border border-white/10 shadow-2xl;
+            }
+            .no-scrollbar::-webkit-scrollbar {
+                display: none;
+            }
+            .no-scrollbar {
+                -ms-overflow-style: none;
+                scrollbar-width: none;
+            }
+            .markdown-content h1 { @apply text-2xl font-bold mb-4 mt-2; }
+            .markdown-content h2 { @apply text-xl font-bold mb-3 mt-2; }
+            .markdown-content h3 { @apply text-lg font-bold mb-2 mt-1; }
+            .markdown-content p { @apply mb-4 leading-relaxed; }
+            .markdown-content ul { @apply list-disc ml-6 mb-4; }
+            .markdown-content ol { @apply list-decimal ml-6 mb-4; }
+            .markdown-content code { @apply bg-slate-200 px-1 rounded text-sm font-mono; }
+            .markdown-content pre { @apply bg-navy text-slate-50 p-4 rounded-lg mb-4 overflow-x-auto font-mono text-sm; }
+            .markdown-content blockquote { @apply border-l-4 border-teal pl-4 italic mb-4; }
+            .markdown-content a { @apply text-teal hover:underline; }
         }
-        .message-agent {
-            background-color: #f3f4f6;
-            color: #1f2937;
-            align-self: flex-start;
+
+        /* Pulsing animation for status pills */
+        @keyframes pulse-soft {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
         }
+        .animate-pulse-soft {
+            animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
         .status-pill {
             display: inline-flex;
             align-items: center;
@@ -32,105 +77,205 @@
         .status-pulse-blue {
             background-color: #dbeafe;
             color: #1e40af;
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
         .status-pulse-yellow {
             background-color: #fef9c3;
             color: #854d0e;
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
         .status-pulse-orange {
             background-color: #ffedd5;
             color: #9a3412;
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .5; }
+            animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
     </style>
 </head>
-<body class="bg-gray-100 font-sans leading-normal tracking-normal">
-    <div class="container mx-auto max-w-4xl p-4">
-        <header class="flex justify-between items-center mb-6">
-            <div>
-                <h1 class="text-2xl font-bold text-blue-900">CLIA Agent Switchboard</h1>
-                <p class="text-sm text-gray-600">Local-First Website Management</p>
+<body class="bg-slate text-navy font-sans min-h-screen flex flex-col" 
+      x-data="{ 
+        showFileUpload: false, 
+        fileName: '', 
+        isProcessing: false,
+        scrollToBottom() {
+            const container = document.getElementById('chat-container');
+            container.scrollTop = container.scrollHeight;
+        }
+      }"
+      x-init="
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+        htmx.process(document.body);
+        
+        // Restore from localStorage
+        const savedHistory = localStorage.getItem('clia_chat_history');
+        if (savedHistory) {
+            document.getElementById('chat-history').innerHTML = savedHistory;
+            htmx.process(document.getElementById('chat-history'));
+            // Initial parse of restored content
+            document.querySelectorAll('.markdown-content').forEach(el => {
+                if (!el.dataset.parsed) {
+                    el.innerHTML = marked.parse(el.textContent.trim());
+                    el.dataset.parsed = 'true';
+                }
+            });
+        }
+        
+        $nextTick(() => scrollToBottom());
+      ">
+
+    <!-- Header -->
+    <header class="sticky top-0 z-50 glass-dark text-white px-4 py-3 flex items-center justify-between shadow-lg">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 bg-teal rounded-lg flex items-center justify-center shadow-inner">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
             </div>
-            <div class="text-right">
-                <span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded text-green-600 bg-green-200 uppercase last:mr-0 mr-1">
+            <div>
+                <h1 class="text-lg font-bold tracking-tight">CLIA Agent Bridge</h1>
+                <p class="text-xs text-teal-300 font-medium uppercase tracking-widest">v2.0 Switchboard</p>
+            </div>
+        </div>
+        
+        <div class="flex items-center space-x-4">
+            <div id="global-status" class="flex items-center space-x-2">
+                <span class="flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-teal/20 text-teal-300 border border-teal/30">
+                    <span class="w-2 h-2 bg-teal rounded-full mr-1.5 animate-pulse"></span>
                     System Active
                 </span>
             </div>
-        </header>
+        </div>
+    </header>
 
-        <main class="bg-white rounded-lg shadow-lg overflow-hidden">
-            <!-- Chat History -->
-            <div id="chat-history" class="chat-container overflow-y-auto p-4 flex flex-col space-y-4">
-                <div class="message-agent p-3 rounded-lg max-w-[80%]">
-                    Hello! I'm the CLIA Agent. How can I help you manage the website today? You can ask me questions about the board, or upload meeting minutes to stage updates.
+    <!-- Main Chat Area -->
+    <main id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-6 pb-32 no-scrollbar">
+        
+        <div id="chat-history" class="space-y-6">
+            <!-- Welcome Message -->
+            <div class="flex justify-start">
+                <div class="max-w-[85%] glass p-4 rounded-2xl rounded-tl-none">
+                    <div class="markdown-content">
+                        Hello! I'm the CLIA Agent. How can I help you manage the website today? You can ask me questions about the board, or upload meeting minutes to stage updates.
+                    </div>
+                    <span class="text-[10px] text-navy/50 mt-2 block">System • Just now</span>
                 </div>
             </div>
+        </div>
 
-            <!-- Input Area -->
-            <div class="p-4 border-t border-gray-200 bg-gray-50">
-                <form hx-post="/agent/chat" 
-                      hx-target="#chat-history" 
-                      hx-swap="beforeend" 
-                      hx-on::after-request="this.reset()"
-                      enctype="multipart/form-data"
-                      class="flex flex-col space-y-2">
-                    
-                    <div class="flex space-x-2">
-                        <textarea name="message" placeholder="Type your request here... (Shift+Enter for new line)" 
-                                  rows="1"
-                                  class="flex-grow p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden"
-                                  onkeydown="if(event.keyCode == 13 && !event.shiftKey) { event.preventDefault(); this.form.dispatchEvent(new Event('submit', {cancelable: true})); }"></textarea>
-                        
-                        <label class="cursor-pointer bg-gray-200 hover:bg-gray-300 p-2 rounded-md transition duration-200 flex items-center justify-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.414a4 4 0 00-5.656-5.656l-6.415 6.414a6 6 0 108.486 8.486L20.5 13" />
-                            </svg>
-                            <input type="file" name="file" class="hidden" onchange="document.getElementById('file-name').textContent = this.files[0].name">
-                        </label>
+    </main>
 
-                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-md transition duration-200">
-                            Send
-                        </button>
+    <!-- Input Area -->
+    <footer class="fixed bottom-0 left-0 right-0 p-4 z-40">
+        <div class="max-w-4xl mx-auto relative">
+            
+            <!-- File Upload Preview -->
+            <div x-show="fileName" x-transition 
+                 class="absolute bottom-full mb-4 left-0 right-0 glass p-3 rounded-xl flex items-center justify-between border-teal/30">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 bg-teal/10 rounded-lg text-teal">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path>
+                        </svg>
                     </div>
-                    <div id="file-name" class="text-xs text-gray-500 italic"></div>
-                </form>
+                    <div>
+                        <p class="text-sm font-bold text-navy" x-text="fileName"></p>
+                        <p class="text-[10px] text-navy/50 uppercase tracking-wider">Ready to upload</p>
+                    </div>
+                </div>
+                <button @click="fileName = ''; $refs.fileInput.value = ''" class="text-navy/40 hover:text-sunset transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
             </div>
-        </main>
-        
-        <footer class="mt-4 text-center text-xs text-gray-500 flex justify-between items-center">
-            <div>CLIA Agent Bridge v1.1 | Powered by Local-First AI</div>
-            <button hx-post="/agent/unlock" 
-                    hx-confirm="Are you sure you want to force unlock the agent? Only do this if you are certain no one else is currently staging an update."
-                    class="opacity-20 hover:opacity-100 text-[10px] underline cursor-pointer">
-                Force Unlock
-            </button>
-        </footer>
-    </div>
+
+            <!-- Main Input Glass -->
+            <form hx-post="/agent/chat" 
+                  hx-target="#chat-history" 
+                  hx-swap="beforeend"
+                  hx-encoding="multipart/form-data"
+                  @submit="isProcessing = true; scrollToBottom();"
+                  hx-on::after-request="isProcessing = false; $refs.userInput.value = ''; fileName = ''; scrollToBottom();"
+                  class="glass rounded-2xl p-2 flex items-end space-x-2 border-white/40 shadow-2xl">
+                
+                <div class="flex-1 relative">
+                    <textarea name="message" 
+                              x-ref="userInput"
+                              rows="1"
+                              @input="$el.style.height = 'auto'; $el.style.height = $el.scrollHeight + 'px'"
+                              @keydown.enter.prevent="if(!$event.shiftKey) $el.form.dispatchEvent(new Event('submit'))"
+                              placeholder="Type a command or ask a question..."
+                              class="w-full bg-transparent border-none focus:ring-0 text-navy placeholder-navy/40 py-3 px-4 max-h-48 resize-none no-scrollbar"></textarea>
+                </div>
+
+                <div class="flex items-center space-x-1 pb-1 pr-1">
+                    <input type="file" name="file" x-ref="fileInput" class="hidden" @change="fileName = $el.files[0].name">
+                    <button type="button" 
+                            @click="$refs.fileInput.click()"
+                            class="p-3 text-navy/40 hover:text-teal hover:bg-teal/5 rounded-xl transition-all">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path>
+                        </svg>
+                    </button>
+                    
+                    <button type="submit" 
+                            :disabled="isProcessing"
+                            class="bg-navy text-white p-3 rounded-xl hover:bg-navy/90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+                        <template x-if="!isProcessing">
+                            <svg class="w-6 h-6 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                            </svg>
+                        </template>
+                        <template x-if="isProcessing">
+                            <svg class="animate-spin h-6 w-6 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                        </template>
+                    </button>
+                </div>
+            </form>
+            
+            <p class="text-[10px] text-center mt-2 text-navy/30 font-medium uppercase tracking-tighter">
+                CLIA Secure Bridge • End-to-End Encrypted • GitOps Verified
+            </p>
+        </div>
+    </footer>
 
     <script>
-        // Auto-scroll to bottom of chat history
-        const chatHistory = document.getElementById('chat-history');
-        const observer = new MutationObserver(() => {
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-            // Save to localStorage whenever chat changes
-            localStorage.setItem('clia_chat_history', chatHistory.innerHTML);
-        });
-        observer.observe(chatHistory, { childList: true });
+        // Handle Markdown rendering after HTMX swaps
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            const newContent = evt.detail.elt;
+            
+            // Render Markdown in any element with .markdown-content
+            newContent.querySelectorAll('.markdown-content').forEach(el => {
+                if (!el.dataset.parsed) {
+                    el.innerHTML = marked.parse(el.textContent.trim());
+                    el.dataset.parsed = "true";
+                }
+            });
 
-        // Restore from localStorage on load
-        window.addEventListener('load', () => {
-            const savedHistory = localStorage.getItem('clia_chat_history');
-            if (savedHistory) {
-                chatHistory.innerHTML = savedHistory;
-                htmx.process(chatHistory);
-                chatHistory.scrollTop = chatHistory.scrollHeight;
-            }
+            // Auto-scroll to bottom on new messages
+            const container = document.getElementById('chat-container');
+            container.scrollTo({
+                top: container.scrollHeight,
+                behavior: 'smooth'
+            });
+
+            // Save to localStorage
+            localStorage.setItem('clia_chat_history', document.getElementById('chat-history').innerHTML);
+        });
+
+        // Initial processing for any pre-existing content
+        window.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.markdown-content').forEach(el => {
+                if (!el.dataset.parsed) {
+                    el.innerHTML = marked.parse(el.textContent.trim());
+                    el.dataset.parsed = "true";
+                }
+            });
         });
     </script>
 </body>

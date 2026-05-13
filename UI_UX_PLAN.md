@@ -63,3 +63,4 @@
 ## 7. Known Issues & Backlog
 - **Status Flicker:** Deployment status occasionally flashes "FAILED" for one polling cycle during the transition between revisions. (Do not prioritize, but track).
 - **Success Gating:** The UI should only show the final "SUCCESS!" state once the "Live" status has been confirmed and remains stable for at least one polling cycle.
+- **Rollback Propagation Tracking:** When "Undo Last" is clicked, the UI should display pulsing status indicators (similar to deployment) to confirm the site has successfully reverted to the previous version manifest.

@@ -130,10 +130,11 @@ async def get_status(message_id: str, user: str = Depends(get_iap_user)):
     if "message-agent" in content and "hx-get" not in content:
         return HTMLResponse(content=content)
     return HTMLResponse(content=f"""
-    <div class="message-agent p-3 rounded-lg max-w-[80%] bg-yellow-50 border border-yellow-200"
-         id="status-container-{message_id}"
-         hx-get="/agent/status/{message_id}" hx-trigger="every 2s" hx-swap="outerHTML">
-        <p class="text-sm text-yellow-800" id="status-message">{content}</p>
+    <div class="flex justify-start" id="status-container-{message_id}" hx-get="/agent/status/{message_id}" hx-trigger="every 2s" hx-swap="outerHTML">
+        <div class="max-w-[85%] glass p-4 rounded-2xl rounded-tl-none flex items-center space-x-3">
+            <div class="animate-spin h-4 w-4 border-2 border-teal border-t-transparent rounded-full"></div>
+            <p class="text-xs font-bold text-navy/50 uppercase tracking-widest">{content}</p>
+        </div>
     </div>
     """)
 
@@ -163,9 +164,15 @@ async def rollback_prod_worker(user: str, message_id: str):
         question = get_gemini_response(prompt, "gemini-3.1-flash-lite")
         
         final_html = f"""
-        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-red-50 border border-red-200">
-            <p class="text-sm text-red-800 mb-2"><b>Production Reverted.</b> Both main and dev sites have been restored to their previous states.</p>
-            <div class="text-sm">{question}</div>
+        <div class="message-agent p-4 glass border-l-4 border-sunset rounded-xl max-w-[85%]">
+            <div class="flex items-center space-x-2 mb-2 text-sunset">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                <p class="text-sm font-bold uppercase tracking-wider">Production Reverted</p>
+            </div>
+            <div class="markdown-content text-navy text-sm">
+                {question}
+            </div>
+            <span class="text-[10px] text-navy/50 mt-2 block">System • Just now</span>
         </div>
         """
         await chat_manager.update_message(message_id, final_html)
@@ -205,9 +212,15 @@ async def rollback_dev_worker(user: str, message_id: str):
         question = get_gemini_response(prompt, "gemini-3.1-flash-lite")
         
         final_html = f"""
-        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-orange-50 border border-orange-200">
-            <p class="text-sm text-orange-800 mb-2"><b>Rollback Complete.</b> The dev site has been restored to its previous state.</p>
-            <div class="text-sm">{question}</div>
+        <div class="message-agent p-4 glass border-l-4 border-sunset rounded-xl max-w-[85%]">
+            <div class="flex items-center space-x-2 mb-2 text-sunset">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                <p class="text-sm font-bold uppercase tracking-wider">Rollback Complete</p>
+            </div>
+            <div class="markdown-content text-navy text-sm">
+                {question}
+            </div>
+            <span class="text-[10px] text-navy/50 mt-2 block">System • Just now</span>
         </div>
         """
         await chat_manager.update_message(message_id, final_html)
@@ -314,19 +327,28 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                     encoded_content = base64.b64encode(new_content.encode('utf-8')).decode('utf-8')
                     
                     confirm_html = f"""
-                    <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
-                        <h3 class="font-bold text-blue-800">Step 1: Verify Selection</h3>
-                        <p class="text-sm mb-2">File: <code>{file_to_change}</code></p>
-                        <p class="text-xs italic mb-4">Summary: {summary}</p>
-                        <div class="flex space-x-2">
+                    <div class="message-agent p-4 glass border-l-4 border-teal rounded-xl max-w-[85%]">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h3 class="font-bold text-navy">Staging Plan Ready</h3>
+                                <p class="text-xs text-navy/70 italic">File: <code>{file_to_change}</code></p>
+                            </div>
+                            <span class="px-2 py-1 bg-teal/10 text-teal text-[10px] font-bold rounded uppercase tracking-wider">Step 1: Review</span>
+                        </div>
+                        
+                        <div class="markdown-content text-sm mb-6">
+                            {summary}
+                        </div>
+
+                        <div class="flex space-x-3">
                             <form hx-post="/agent/confirm-stage" hx-target="closest .message-agent" hx-swap="outerHTML" class="flex-1">
                                 <input type="hidden" name="message_id" value="{message_id}">
                                 <input type="hidden" name="file" value="{file_to_change}">
                                 <input type="hidden" name="summary" value="{summary}">
                                 <input type="hidden" name="content_b64" value="{encoded_content}">
-                                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3 rounded">Confirm & Stage</button>
+                                <button type="submit" class="w-full bg-teal hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg transition-colors shadow-md">Confirm & Stage</button>
                             </form>
-                            <button hx-post="/agent/cancel-plan" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Discard</button>
+                            <button hx-post="/agent/cancel-plan" hx-target="closest .message-agent" hx-swap="outerHTML" class="px-4 py-2 border border-navy/20 text-navy/60 hover:bg-navy/5 rounded-lg transition-colors font-medium text-sm">Discard</button>
                         </div>
                     </div>
                     """
@@ -353,7 +375,15 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             Context: {history_context}
             """
             answer = get_gemini_response(query_prompt, model_to_use)
-            final_html = f"<div class='message-agent p-3 rounded-lg max-w-[80%]'><div class='text-[10px] text-gray-400 mb-1 uppercase font-bold'>{model_to_use}</div>{answer}</div>"
+            final_html = f"""
+            <div class="message-agent p-4 glass rounded-2xl rounded-tl-none max-w-[85%]">
+                <div class="text-[8px] text-navy/30 mb-1 uppercase font-bold tracking-widest">{model_to_use}</div>
+                <div class="markdown-content text-navy">
+                    {answer}
+                </div>
+                <span class="text-[10px] text-navy/50 mt-2 block">Agent • Just now</span>
+            </div>
+            """
             await chat_manager.update_message(message_id, final_html)
             await chat_manager.release_lock(user)
 
@@ -366,8 +396,9 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
 async def cancel_plan(user: str = Depends(get_iap_user)):
     try:
         return HTMLResponse(content="""
-        <div class='message-agent p-3 rounded-lg max-w-[80%] bg-gray-50 border border-gray-200'>
-            <p class='text-xs italic text-gray-600'>Update plan discarded. No changes were made to the site. Is there anything else I can help you with?</p>
+        <div class='message-agent p-4 glass rounded-2xl rounded-tl-none max-w-[85%]'>
+            <p class='text-xs italic text-navy/60'>Update plan discarded. No changes were made to the site. Is there anything else I can help you with?</p>
+            <span class="text-[10px] text-navy/50 mt-2 block">System • Just now</span>
         </div>
         """)
     finally:
@@ -385,12 +416,16 @@ async def chat_endpoint(
     lock_status = await chat_manager.is_locked(user)
     if lock_status["locked"]:
         return HTMLResponse(content=f"""
-        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-yellow-50 border border-yellow-200">
-            <p class="text-sm text-yellow-800"><b>Agent Busy:</b> {lock_status['user']} is staging an update.</p>
+        <div class="message-agent p-4 glass border-l-4 border-sunset rounded-xl max-w-[85%]">
+            <div class="flex items-center space-x-2 mb-2 text-sunset">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                <p class="text-sm font-bold uppercase tracking-wider">Agent Busy</p>
+            </div>
+            <p class="text-sm text-navy/70 mb-4"><b>{lock_status['user']}</b> is currently staging an update. Please wait or force an unlock if this is an error.</p>
             <button hx-post="/agent/unlock" 
                     hx-target="closest .message-agent"
                     hx-swap="outerHTML"
-                    class="mt-2 text-[10px] bg-yellow-200 hover:bg-yellow-300 text-yellow-800 py-1 px-2 rounded border border-yellow-400">
+                    class="w-full bg-slate hover:bg-slate-200 text-navy/50 text-[10px] font-bold py-2 rounded-lg border border-navy/10 uppercase tracking-widest transition-colors">
                 Force Unlock
             </button>
         </div>
@@ -406,9 +441,17 @@ async def chat_endpoint(
     background_tasks.add_task(chat_worker, user, message, doc_bytes, message_id, history_context)
     
     return HTMLResponse(content=f"""
-    <div class="message-user p-3 rounded-lg max-w-[80%]">{message}</div>
-    <div class="message-agent p-3 rounded-lg max-w-[80%] bg-yellow-50 border border-yellow-200" id="status-container-{message_id}" hx-get="/agent/status/{message_id}" hx-trigger="every 2s" hx-swap="outerHTML">
-        <p class="text-sm text-yellow-800">Processing...</p>
+    <div class="flex justify-end mb-6">
+        <div class="max-w-[85%] bg-navy text-white p-4 rounded-2xl rounded-tr-none shadow-lg">
+            <p class="text-sm leading-relaxed">{message}</p>
+            <span class="text-[10px] text-white/50 mt-2 block text-right">You • Just now</span>
+        </div>
+    </div>
+    <div class="flex justify-start" id="status-container-{message_id}" hx-get="/agent/status/{message_id}" hx-trigger="every 2s" hx-swap="outerHTML">
+        <div class="max-w-[85%] glass p-4 rounded-2xl rounded-tl-none flex items-center space-x-3">
+            <div class="animate-spin h-4 w-4 border-2 border-teal border-t-transparent rounded-full"></div>
+            <p class="text-xs font-bold text-navy/50 uppercase tracking-widest">Agent is thinking...</p>
+        </div>
     </div>
     """)
 
@@ -519,23 +562,34 @@ async def confirm_stage(
             return HTMLResponse(content=error_html)
 
         final_html = f"""
-        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-blue-50 border border-blue-200">
-            <h3 class="font-bold text-blue-800">Staged on Dev Site</h3>
-            <p class="text-sm mb-4">Summary: {summary}</p>
-            <div class="flex flex-col space-y-3">
-                <div class="flex items-center space-x-2">
-                    <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">Verify on Dev Site</a>
-                    <div id="dev-deploy-status" hx-get="/agent/deploy-status?branch=dev&version={commit_ts}" hx-trigger="load, every 10s" class="status-pill bg-gray-100 text-gray-500">Checking...</div>
+        <div class="message-agent p-4 glass border-l-4 border-teal rounded-xl max-w-[85%]">
+            <div class="flex justify-between items-start mb-4">
+                <div>
+                    <h3 class="font-bold text-navy">Staged on Dev Site</h3>
+                    <p class="text-xs text-navy/70 italic">{summary}</p>
                 </div>
+                <span class="px-2 py-1 bg-teal/10 text-teal text-[10px] font-bold rounded uppercase tracking-wider">Step 2: Verify</span>
+            </div>
+
+            <div class="flex flex-col space-y-4">
+                <div class="flex items-center space-x-3">
+                    <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-teal hover:bg-teal-700 text-white text-center text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-md no-underline">Verify on Dev Site</a>
+                    <div id="dev-deploy-status" hx-get="/agent/deploy-status?branch=dev&version={commit_ts}" hx-trigger="load, every 10s" class="status-pill bg-slate text-navy/50 border border-navy/10">Checking...</div>
+                </div>
+                
                 <form hx-post="/agent/rollback-dev" hx-target="closest .message-agent" hx-swap="outerHTML">
                     <input type="hidden" name="message_id" value="{message_id}">
-                    <button type="submit" class="w-full bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-bold py-1 px-3 rounded uppercase tracking-wider">Undo Last (Restore Dev)</button>
+                    <button type="submit" class="w-full bg-sunset hover:bg-orange-600 text-white text-[10px] font-bold py-1.5 px-3 rounded-lg uppercase tracking-wider shadow-sm transition-colors">Undo Last (Restore Dev)</button>
                 </form>
-                <div class="border-t border-blue-200 pt-3">
-                    <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
-                    <div class="flex space-x-2">
-                        <button hx-post="/agent/approve?branch={branch_name}&message_id={message_id}&version={commit_ts}" hx-target="closest .message-agent" hx-swap="outerHTML" class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">Approve & Push</button>
-                    </div>
+
+                <div class="border-t border-navy/10 pt-4">
+                    <p class="text-[10px] text-navy/40 mb-2 font-bold uppercase tracking-widest">Final Action</p>
+                    <button hx-post="/agent/approve?branch={branch_name}&message_id={message_id}&version={commit_ts}" 
+                            hx-target="closest .message-agent" 
+                            hx-swap="outerHTML" 
+                            class="w-full bg-navy hover:bg-blue-900 text-white font-bold py-2.5 rounded-lg transition-all shadow-lg">
+                        Approve & Push to Production
+                    </button>
                 </div>
             </div>
         </div>
@@ -566,15 +620,21 @@ async def approve_update(branch: str, message_id: str, version: Optional[str] = 
         git_ops.merge_to_main(branch)
         version_param = f"&version={version}" if version else ""
         return HTMLResponse(content=f"""
-        <div class="message-agent p-3 rounded-lg max-w-[80%] bg-green-50 border border-green-200">
-            <h3 class="font-bold text-green-800 mb-1">Pushing to Production...</h3>
-            <p class="text-sm text-green-700">Changes merged to <b>main</b>. Updating live site...</p>
-            <div class="mt-2 flex flex-col space-y-2">
-                <div class="flex items-center space-x-2">
-                    <div id="prod-deploy-status" hx-get="/agent/deploy-status?branch=main{version_param}" hx-trigger="load, every 10s" class="status-pill bg-white border border-green-200 text-green-600">Checking Prod...</div>
-                    <form hx-post="/agent/revert" hx-target="closest .message-agent" hx-swap="outerHTML">
+        <div class="message-agent p-4 glass border-l-4 border-navy rounded-xl max-w-[85%]">
+            <div class="flex justify-between items-start mb-4">
+                <div>
+                    <h3 class="font-bold text-navy">Pushing to Production...</h3>
+                    <p class="text-xs text-navy/70 italic">Changes merged to <b>main</b></p>
+                </div>
+                <span class="px-2 py-1 bg-navy/10 text-navy text-[10px] font-bold rounded uppercase tracking-wider">Live Update</span>
+            </div>
+
+            <div class="flex flex-col space-y-4">
+                <div class="flex items-center space-x-3">
+                    <div id="prod-deploy-status" hx-get="/agent/deploy-status?branch=main{version_param}" hx-trigger="load, every 10s" class="status-pill bg-slate text-navy/50 border border-navy/10">Checking Prod...</div>
+                    <form hx-post="/agent/revert" hx-target="closest .message-agent" hx-swap="outerHTML" class="flex-1">
                         <input type="hidden" name="message_id" value="{message_id}">
-                        <button type="submit" class="text-[10px] text-red-600 underline font-bold">Undo Last (Emergency Revert)</button>
+                        <button type="submit" class="w-full text-[10px] text-sunset hover:text-orange-700 underline font-bold uppercase tracking-widest transition-colors">Undo Last (Emergency Revert)</button>
                     </form>
                 </div>
             </div>
