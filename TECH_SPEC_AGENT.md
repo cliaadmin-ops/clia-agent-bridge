@@ -9,17 +9,26 @@ The CLIA Agent Bridge is a standalone FastAPI service that acts as an autonomous
 - **Persistence:** Firestore (Async) for chat history; LocalStorage for UI session continuity.
 - **Deployment:** Cloud Run (Global Endpoint).
 
-## The "Two-Gate" Workflow (Stable v1.4.0)
+## The "Two-Gate" Workflow (Stable v1.6.0)
 1.  **Staging (Gate 1):**
     - User requests a change (e.g., "Update footer to v1.3").
     - Agent identifies target, reads current content, and generates a staging plan.
     - User reviews the plan in the UI and clicks **"Confirm & Stage"**.
     - Agent creates a feature branch, applies changes, and merges into the `dev` branch.
+    - **Discard Plan:** If the user rejects the plan *before* staging, the Agent abandons the task without touching Git.
+    - **Undo Last:** If the user is unhappy *after* staging to dev, they can click "Undo Last" to perform an atomic `force-with-lease` rollback of the `dev` branch.
 2.  **Production (Gate 2):**
     - User verifies the changes on the **Dev Site URL**.
     - User returns to the UI and clicks **"Approve & Push to Production"**.
     - Agent merges the `dev` state into `main` and pushes to the live site.
     - **CRITICAL:** The Agent MUST NEVER push to `main` without explicit user approval at this gate.
+    - **Rollback:** A production rollback is available to restore the live site to its previous state.
+
+## Technical Components
+- **Path Security:** `get_safe_path` (pathlib-based) enforces all writes to the `public/` directory.
+- **Atomic GitOps:** Uses `origin/branch~1:branch` syntax for remote-first rollbacks, ensuring consistency in ephemeral Cloud Run environments.
+- **Intelligent Follow-up:** Rollback actions trigger a background worker that uses Gemini to ask diagnostic questions based on chat history.
+- **State Management:** Firestore-backed chat history and a global "Agent Lock" to prevent concurrent write conflicts.
 
 ## Content-Aware Staging Protocol
 When a user requests a change:
