@@ -29,6 +29,25 @@
             font-weight: 700;
             text-transform: uppercase;
         }
+        .status-pulse-blue {
+            background-color: #dbeafe;
+            color: #1e40af;
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        .status-pulse-yellow {
+            background-color: #fef9c3;
+            color: #854d0e;
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        .status-pulse-orange {
+            background-color: #ffedd5;
+            color: #9a3412;
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
     </style>
 </head>
 <body class="bg-gray-100 font-sans leading-normal tracking-normal">

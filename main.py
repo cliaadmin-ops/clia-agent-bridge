@@ -413,29 +413,66 @@ async def chat_endpoint(
     """)
 
 @app.get("/agent/deploy-status")
-async def get_deploy_status(branch: str, user: str = Depends(get_iap_user)):
+async def get_deploy_status(branch: str, version: Optional[str] = None, user: str = Depends(get_iap_user)):
     try:
         service_name = "clia-dev" if branch == "dev" else "clia-website"
         project_id = "clia-web-prod"
         region = "us-east1"
+        
+        # 1. Fetch Cloud Run Service Status
         credentials, _ = google.auth.default()
         auth_request = google.auth.transport.requests.Request()
         credentials.refresh(auth_request)
         url = f"https://{region}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/{project_id}/services/{service_name}"
         resp = requests.get(url, headers={"Authorization": f"Bearer {credentials.token}"})
-        if resp.status_code != 200: return HTMLResponse(content="<span class='status-pill bg-gray-100 text-gray-400'>Error</span>")
+        
+        if resp.status_code != 200: 
+            return HTMLResponse(content="<span class='status-pill bg-gray-100 text-gray-400'>Error</span>")
+        
         data = resp.json()
         status_data = data.get("status", {})
-        obs_gen = status_data.get("observedGeneration")
-        meta_gen = data.get("metadata", {}).get("generation")
+        metadata = data.get("metadata", {})
+        
+        # 2. Spec Sync Check
+        obs_gen = status_data.get("observedGeneration", 0)
+        meta_gen = metadata.get("generation", 0)
+        if obs_gen < meta_gen:
+            return HTMLResponse(content="<span class='status-pill status-pulse-blue'>● Triggered</span>")
+            
+        # 3. Revision Health Check
+        latest_created = status_data.get("latestCreatedRevisionName")
+        latest_ready = status_data.get("latestReadyRevisionName")
+        if latest_created != latest_ready:
+            return HTMLResponse(content="<span class='status-pill status-pulse-yellow'>● Deploying</span>")
+            
+        # 4. Traffic Split Check
+        traffic = status_data.get("traffic", [])
+        latest_traffic = next((t for t in traffic if t.get("revisionName") == latest_ready), None)
+        if not latest_traffic or latest_traffic.get("percent", 0) < 100:
+            return HTMLResponse(content="<span class='status-pill status-pulse-orange'>● Activating</span>")
+            
+        # 5. Version-Aware External Check
+        if version:
+            try:
+                site_url = git_ops.get_dev_url() if branch == "dev" else git_ops.get_prod_url()
+                v_resp = requests.get(f"{site_url}/version.json", timeout=3)
+                if v_resp.status_code == 200:
+                    live_version = str(v_resp.json().get("version"))
+                    if live_version != str(version):
+                        return HTMLResponse(content="<span class='status-pill status-pulse-orange'>● Propagating</span>")
+            except Exception:
+                # If site is down or version.json missing, fall back to Cloud Run status
+                pass
+
+        # 6. Final Ready Check
         ready_cond = next((c for c in status_data.get("conditions", []) if c["type"] == "Ready"), None)
-        if not ready_cond: return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Initializing</span>")
-        status = ready_cond.get("status")
-        if (obs_gen is not None and meta_gen is not None and obs_gen < meta_gen) or status == "Unknown":
-            return HTMLResponse(content="<span class='status-pill bg-yellow-100 text-yellow-700 animate-pulse'>● Deploying...</span>")
-        if status == "True": return HTMLResponse(content="<span class='status-pill bg-green-100 text-green-700'>● Live</span>")
+        if ready_cond and ready_cond.get("status") == "True":
+            return HTMLResponse(content="<span class='status-pill bg-green-100 text-green-700'>● Live</span>")
+            
         return HTMLResponse(content="<span class='status-pill bg-red-100 text-red-700'>● Failed</span>")
-    except Exception: return HTMLResponse(content="<span class='status-pill bg-gray-100 text-gray-400'>Error</span>")
+    except Exception as e:
+        print(f"Status Error: {e}")
+        return HTMLResponse(content="<span class='status-pill bg-gray-100 text-gray-400'>Error</span>")
 
 @app.post("/agent/confirm-stage")
 async def confirm_stage(
@@ -460,6 +497,11 @@ async def confirm_stage(
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content, encoding='utf-8')
         
+        # Generate version manifest for deployment tracking
+        version_path = get_safe_path(REPO_PATH, "version.json")
+        commit_ts = int(time.time())
+        version_path.write_text(json.dumps({"version": commit_ts, "user": user}), encoding='utf-8')
+        
         pushed = git_ops.commit_and_push(f"Agent Update: {summary} (Requested by {user})")
         
         if not pushed:
@@ -480,12 +522,12 @@ async def confirm_stage(
             <div class="flex flex-col space-y-3">
                 <div class="flex items-center space-x-2">
                     <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">Step 1: Verify on Dev Site</a>
-                    <div id="dev-deploy-status" hx-get="/agent/deploy-status?branch=dev" hx-trigger="load, every 10s" class="status-pill bg-gray-100 text-gray-500">Checking...</div>
+                    <div id="dev-deploy-status" hx-get="/agent/deploy-status?branch=dev&version={commit_ts}" hx-trigger="load, every 10s" class="status-pill bg-gray-100 text-gray-500">Checking...</div>
                 </div>
                 <div class="border-t border-blue-200 pt-3">
                     <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
                     <div class="flex space-x-2">
-                        <button hx-post="/agent/approve?branch={branch_name}&message_id={message_id}" hx-target="closest .message-agent" hx-swap="outerHTML" class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">Approve & Push</button>
+                        <button hx-post="/agent/approve?branch={branch_name}&message_id={message_id}&version={commit_ts}" hx-target="closest .message-agent" hx-swap="outerHTML" class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">Approve & Push</button>
                         <form hx-post="/agent/rollback-dev" hx-target="closest .message-agent" hx-swap="outerHTML">
                             <input type="hidden" name="message_id" value="{message_id}">
                             <button type="submit" class="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold py-1 px-3 rounded">Undo Last</button>
@@ -516,15 +558,16 @@ async def rollback_dev_endpoint(
     """)
 
 @app.post("/agent/approve")
-async def approve_update(branch: str, message_id: str, user: str = Depends(get_iap_user)):
+async def approve_update(branch: str, message_id: str, version: Optional[str] = None, user: str = Depends(get_iap_user)):
     try:
         git_ops.merge_to_main(branch)
+        version_param = f"&version={version}" if version else ""
         return HTMLResponse(content=f"""
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-green-50 border border-green-200">
             <h3 class="font-bold text-green-800 mb-1">Success!</h3>
             <p class="text-sm text-green-700">Changes merged to <b>main</b>.</p>
             <div class="mt-2 flex items-center space-x-2">
-                <div id="prod-deploy-status" hx-get="/agent/deploy-status?branch=main" hx-trigger="load, every 10s" class="status-pill bg-white border border-green-200 text-green-600">Checking Prod...</div>
+                <div id="prod-deploy-status" hx-get="/agent/deploy-status?branch=main{version_param}" hx-trigger="load, every 10s" class="status-pill bg-white border border-green-200 text-green-600">Checking Prod...</div>
                 <form hx-post="/agent/revert" hx-target="closest .message-agent" hx-swap="outerHTML">
                     <input type="hidden" name="message_id" value="{message_id}">
                     <button type="submit" class="text-[10px] text-red-600 underline">Undo Last</button>

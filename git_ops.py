@@ -209,3 +209,6 @@ class GitOps:
 
     def get_dev_url(self):
         return "https://clia-dev-378290023292.us-east1.run.app"
+
+    def get_prod_url(self):
+        return "https://clia-website-378290023292.us-east1.run.app"
