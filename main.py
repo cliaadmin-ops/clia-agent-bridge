@@ -288,7 +288,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                                 <input type="hidden" name="content_b64" value="{encoded_content}">
                                 <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3 rounded">Confirm & Stage</button>
                             </form>
-                            <button hx-post="/agent/discard" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Discard</button>
+                            <button hx-post="/agent/cancel-plan" hx-target="closest .message-agent" hx-swap="outerHTML" class="bg-gray-400 hover:bg-gray-500 text-white text-xs font-bold py-1 px-3 rounded">Discard</button>
                         </div>
                     </div>
                     """
@@ -322,6 +322,17 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
     except Exception as e:
         print(f"Worker Error: {e}")
         await chat_manager.update_message(message_id, f"System Error: {e}")
+        await chat_manager.release_lock(user)
+
+@app.post("/agent/cancel-plan")
+async def cancel_plan(user: str = Depends(get_iap_user)):
+    try:
+        return HTMLResponse(content="""
+        <div class='message-agent p-3 rounded-lg max-w-[80%] bg-gray-50 border border-gray-200'>
+            <p class='text-xs italic text-gray-600'>Update plan discarded. No changes were made to the site. Is there anything else I can help you with?</p>
+        </div>
+        """)
+    finally:
         await chat_manager.release_lock(user)
 
 @app.post("/agent/chat")
