@@ -671,6 +671,22 @@ async def force_unlock(user: str = Depends(get_iap_user)):
     </div>
     """)
 
+@app.get("/agent/reset")
+async def reset_user_session(user: str = Depends(get_iap_user)):
+    """
+    Emergency reset for a user's session.
+    Clears history and releases the lock.
+    """
+    await chat_manager.clear_history(user)
+    await chat_manager.release_lock(user)
+    return HTMLResponse(content="""
+    <div style="font-family: sans-serif; padding: 2rem; text-align: center;">
+        <h1 style="color: #1e3a8a;">Session Reset Successful</h1>
+        <p>Your chat history has been cleared and the agent lock has been released.</p>
+        <a href="/agent" style="display: inline-block; background: #1e3a8a; color: white; padding: 0.5rem 1rem; border-radius: 5px; text-decoration: none; margin-top: 1rem;">Return to Switchboard</a>
+    </div>
+    """)
+
 @app.post("/agent/clear")
 async def clear_chat_history(user: str = Depends(get_iap_user)):
     await chat_manager.clear_history(user)
