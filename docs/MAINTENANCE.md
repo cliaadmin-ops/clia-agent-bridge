@@ -23,7 +23,8 @@
 ## Maintenance Tasks
 - **Reverting Production:** Use the **Undo** button in the Agent UI or run `git revert HEAD` on the `main` branch.
 - **Updating Manifest:** If new editable sections are added, update `public/site-manifest.json` so the Agent can find them.
+- **Path Resolution Debugging:** If the agent fails to find a file, verify the path in `site-manifest.json`. The agent uses `get_safe_path` to force all operations into the `public/` folder.
 - **Monitoring Logs:** Check Google Cloud Run logs for the `clia-agent-bridge` service for troubleshooting.
 
 ## Versioning
-- Current Stable: `v1.3.0-stable`
+- Current Stable: `v1.4.0-stable` (Unified Path Resolution)
