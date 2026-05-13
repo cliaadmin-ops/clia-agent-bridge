@@ -524,21 +524,23 @@ async def confirm_stage(
             <p class="text-sm mb-4">Summary: {summary}</p>
             <div class="flex flex-col space-y-3">
                 <div class="flex items-center space-x-2">
-                    <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">Step 1: Verify on Dev Site</a>
+                    <a href="{git_ops.get_dev_url()}" target="_blank" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center text-xs font-bold py-2 px-3 rounded no-underline">Verify on Dev Site</a>
                     <div id="dev-deploy-status" hx-get="/agent/deploy-status?branch=dev&version={commit_ts}" hx-trigger="load, every 10s" class="status-pill bg-gray-100 text-gray-500">Checking...</div>
                 </div>
+                <form hx-post="/agent/rollback-dev" hx-target="closest .message-agent" hx-swap="outerHTML">
+                    <input type="hidden" name="message_id" value="{message_id}">
+                    <button type="submit" class="w-full bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-bold py-1 px-3 rounded uppercase tracking-wider">Undo Last (Restore Dev)</button>
+                </form>
                 <div class="border-t border-blue-200 pt-3">
                     <p class="text-[10px] text-blue-600 mb-2 font-bold uppercase">Step 2: Final Action</p>
+                    <div class="flex space-x-2">
                         <button hx-post="/agent/approve?branch={branch_name}&message_id={message_id}&version={commit_ts}" hx-target="closest .message-agent" hx-swap="outerHTML" class="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-3 rounded">Approve & Push</button>
-                        <form hx-post="/agent/rollback-dev" hx-target="closest .message-agent" hx-swap="outerHTML">
-                            <input type="hidden" name="message_id" value="{message_id}">
-                            <button type="submit" class="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold py-1 px-3 rounded">Undo Last</button>
-                        </form>
                     </div>
                 </div>
             </div>
         </div>
         """
+
         await chat_manager.update_message(message_id, final_html)
         return HTMLResponse(content=final_html)
     except Exception as e: return HTMLResponse(content=f"<div class='text-red-600'>Error: {e}</div>")
@@ -565,14 +567,16 @@ async def approve_update(branch: str, message_id: str, version: Optional[str] = 
         version_param = f"&version={version}" if version else ""
         return HTMLResponse(content=f"""
         <div class="message-agent p-3 rounded-lg max-w-[80%] bg-green-50 border border-green-200">
-            <h3 class="font-bold text-green-800 mb-1">Success!</h3>
-            <p class="text-sm text-green-700">Changes merged to <b>main</b>.</p>
-            <div class="mt-2 flex items-center space-x-2">
-                <div id="prod-deploy-status" hx-get="/agent/deploy-status?branch=main{version_param}" hx-trigger="load, every 10s" class="status-pill bg-white border border-green-200 text-green-600">Checking Prod...</div>
-                <form hx-post="/agent/revert" hx-target="closest .message-agent" hx-swap="outerHTML">
-                    <input type="hidden" name="message_id" value="{message_id}">
-                    <button type="submit" class="text-[10px] text-red-600 underline">Undo Last</button>
-                </form>
+            <h3 class="font-bold text-green-800 mb-1">Pushing to Production...</h3>
+            <p class="text-sm text-green-700">Changes merged to <b>main</b>. Updating live site...</p>
+            <div class="mt-2 flex flex-col space-y-2">
+                <div class="flex items-center space-x-2">
+                    <div id="prod-deploy-status" hx-get="/agent/deploy-status?branch=main{version_param}" hx-trigger="load, every 10s" class="status-pill bg-white border border-green-200 text-green-600">Checking Prod...</div>
+                    <form hx-post="/agent/revert" hx-target="closest .message-agent" hx-swap="outerHTML">
+                        <input type="hidden" name="message_id" value="{message_id}">
+                        <button type="submit" class="text-[10px] text-red-600 underline font-bold">Undo Last (Emergency Revert)</button>
+                    </form>
+                </div>
             </div>
         </div>
         """)

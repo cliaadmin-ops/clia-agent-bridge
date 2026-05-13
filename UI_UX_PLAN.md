@@ -59,3 +59,7 @@
 ## 6. Hand-off Requirements
 - Advanced model should provide a single, production-ready `index.html` (including inline CSS/JS or links to CDN).
 - Ensure mobile responsiveness for Site Managers checking updates on the go.
+
+## 7. Known Issues & Backlog
+- **Status Flicker:** Deployment status occasionally flashes "FAILED" for one polling cycle during the transition between revisions. (Do not prioritize, but track).
+- **Success Gating:** The UI should only show the final "SUCCESS!" state once the "Live" status has been confirmed and remains stable for at least one polling cycle.
