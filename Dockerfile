@@ -1,8 +1,9 @@
 # Stage 1: Build Tailwind
 FROM node:20-slim AS builder
 WORKDIR /app
-COPY . .
+COPY package.json package-lock.json* ./
 RUN npm install -D tailwindcss
+COPY . .
 RUN npx tailwindcss -i ./static/css/input.css -o ./static/css/main.css --minify
 
 # Stage 2: Final Python Image

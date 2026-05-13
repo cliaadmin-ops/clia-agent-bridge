@@ -1,0 +1,8 @@
+{
+  "name": "clia-agent-bridge",
+  "version": "1.0.0",
+  "description": "Tailwind build configuration",
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}
