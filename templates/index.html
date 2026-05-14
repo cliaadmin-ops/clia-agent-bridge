@@ -121,6 +121,7 @@
                   hx-encoding="multipart/form-data"
                   @submit="isProcessing = true; scrollToBottom();"
                   hx-on::after-request="isProcessing = false; $refs.userInput.value = ''; $refs.userInput.style.height = 'auto'; fileName = ''; $refs.fileInput.value = ''; scrollToBottom();"
+                  hx-on::before-request="$refs.userInput.value = ''; $refs.userInput.style.height = 'auto'; fileName = ''; $refs.fileInput.value = '';"
                   class="glass rounded-2xl p-2 flex items-end space-x-2 border-white/40 shadow-2xl transition-all duration-300"
                   :class="activeMode === 'edit' ? 'ring-2 ring-navy/20' : 'ring-0'">
 
@@ -217,17 +218,15 @@
             localStorage.setItem('clia_chat_history', document.getElementById('chat-history').innerHTML);
         });
 
-        // Initial processing for any pre-existing content
-        window.addEventListener('DOMContentLoaded', () => {
-            document.querySelectorAll('.markdown-content').forEach(el => {
-                if (!el.dataset.parsed) {
-                    const content = el.textContent ? el.textContent.trim() : '';
-                    if (content) {
-                        el.innerHTML = marked.parse(content);
-                        el.dataset.parsed = "true";
-                    }
-                }
-            });
+        // Fix for HTMX after-request not firing in some edge cases
+        document.body.addEventListener('htmx:responseError', function(evt) {
+            console.error("HTMX Response Error:", evt.detail);
+            window.dispatchEvent(new CustomEvent('reset-input'));
+        });
+        
+        document.body.addEventListener('htmx:sendError', function(evt) {
+            console.error("HTMX Send Error:", evt.detail);
+            window.dispatchEvent(new CustomEvent('reset-input'));
         });
     </script>
 </body>

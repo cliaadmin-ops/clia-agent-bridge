@@ -249,6 +249,13 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             complexity = 3
             file_to_change = None
             await chat_manager.update_message(message_id, "Thinking (Plan Mode)...")
+            
+            # Read manifest for context even in Plan mode
+            manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
+            manifest_content = "{}"
+            if os.path.exists(manifest_path):
+                with open(manifest_path, 'r') as f:
+                    manifest_content = f.read()
         else:
             await chat_manager.update_message(message_id, "Analyzing request (Edit Mode)...")
             
@@ -424,6 +431,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             
             Question: {message}
             Git Context: {git_context}
+            Site Manifest: {manifest_content}
             Context: {history_context}
             """
             
