@@ -339,7 +339,27 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                     "summary": "Brief explanation of change"
                 }}
                 """
-                staging_raw = get_gemini_response(staging_prompt, "gemini-3-flash-preview")
+                
+                # Build multi-modal contents if doc_bytes is present
+                if doc_bytes:
+                    print(f"DEBUG: Sending multi-modal request to Gemini ({len(doc_bytes)} bytes)")
+                    # Determine mime type (basic check)
+                    mime_type = "image/jpeg"
+                    if message.lower().endswith(".png") or "png" in message.lower():
+                        mime_type = "image/png"
+                    
+                    contents = [
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_text(text=staging_prompt),
+                                types.Part.from_bytes(data=doc_bytes, mime_type=mime_type)
+                            ]
+                        )
+                    ]
+                    staging_raw = get_gemini_response(None, "gemini-3-flash-preview", contents=contents)
+                else:
+                    staging_raw = get_gemini_response(staging_prompt, "gemini-3-flash-preview")
                 
                 json_str = staging_raw
                 if "```json" in json_str: json_str = json_str.split("```json")[1].split("```")[0]
