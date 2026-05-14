@@ -250,12 +250,34 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             file_to_change = None
             await chat_manager.update_message(message_id, "Thinking (Plan Mode)...")
             
-            # Read manifest for context even in Plan mode
+            # Read manifest for context
             manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
             manifest_content = "{}"
             if os.path.exists(manifest_path):
                 with open(manifest_path, 'r') as f:
                     manifest_content = f.read()
+            
+            # Generate a file list for the agent
+            repo_files = []
+            for root, dirs, files in os.walk(REPO_PATH):
+                if '.git' in dirs: dirs.remove('.git')
+                for f in files:
+                    repo_files.append(os.path.relpath(os.path.join(root, f), REPO_PATH))
+            file_list_str = "\n".join(repo_files)
+
+            # Look for specific file requests in the message
+            extra_context = ""
+            import re
+            # Match paths like /docs/SITE_TREE.md or public/index.html
+            paths = re.findall(r'/?(?:docs|public|static)/[\w\-\./]+', message)
+            for p in paths:
+                clean_p = p.lstrip('/')
+                full_p = Path(REPO_PATH) / clean_p
+                if full_p.exists() and full_p.is_file():
+                    try:
+                        content = full_p.read_text(encoding='utf-8')
+                        extra_context += f"\n\nContent of {p}:\n{content}"
+                    except: pass
         else:
             await chat_manager.update_message(message_id, "Analyzing request (Edit Mode)...")
             
@@ -265,6 +287,9 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             if os.path.exists(manifest_path):
                 with open(manifest_path, 'r') as f:
                     manifest_content = f.read()
+            
+            file_list_str = "Available in manifest."
+            extra_context = ""
 
             triage_prompt = f"""
             You are the CLIA Content Steward. 
@@ -432,6 +457,9 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             Question: {message}
             Git Context: {git_context}
             Site Manifest: {manifest_content}
+            Repository File List:
+            {file_list_str}
+            {extra_context}
             Context: {history_context}
             """
             
