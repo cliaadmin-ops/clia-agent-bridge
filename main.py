@@ -298,6 +298,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             Git Context: {git_context}
             Site Manifest: {manifest_content}
             User Message: {message}
+            Discussion History: {history_context}
             
             Rules:
             1. If the user asks to change, update, increment, fix, or modify ANY content (including version numbers, text, or data), intent MUST be 'WRITE'.
@@ -368,6 +369,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                 
                 Context: {git_context}
                 Request: {message}
+                Discussion History: {history_context}
                 Current Content: 
                 {current_content}
                 
