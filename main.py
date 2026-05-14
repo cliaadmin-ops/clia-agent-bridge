@@ -305,7 +305,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             extra_context = ""
 
             triage_prompt = f"""
-            You are the CLIA Content Steward. 
+            You are the CLIA Content Steward for the Canadarago Lake Improvement Association. 
             Analyze the user's intent and the site manifest to determine if this is a READ (question/analysis) or WRITE (modification) request.
             
             Git Context: {git_context}
@@ -319,7 +319,9 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             3. CRITICAL: If intent is 'WRITE' AND Git Context shows 'Pending on dev' is NOT 'None', you must still classify as 'WRITE' but set 'target_file' to 'LOCKED'.
             4. Respond ONLY with a JSON object: {{"intent": "READ"|"WRITE", "complexity": 1-10, "target_file": "path/to/file"}}
             
-            Note: Use the timestamps in the Discussion History to prioritize the most recent user intent.
+            CRITICAL: You are the Content Steward for the Canadarago Lake Improvement Association (CLIA). 
+            Do NOT confuse this with the Clinical Laboratory Improvement Amendments. 
+            Use the timestamps in the Discussion History to prioritize the most recent user intent.
             """
             
             triage_raw = get_gemini_response(triage_prompt, "gemini-3.1-flash-lite")
@@ -394,7 +396,10 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                     "summary": "Brief explanation of change"
                 }}
                 
-                Note: Use the timestamps in the Discussion History to prioritize the most recent instructions.
+                CRITICAL: You are the Content Steward for the Canadarago Lake Improvement Association (CLIA). 
+                Do NOT confuse this with the Clinical Laboratory Improvement Amendments. 
+                Ensure all content is relevant to the lake, its community, and environmental stewardship.
+                Use the timestamps in the Discussion History to prioritize the most recent instructions.
                 """
                 
                 # Build multi-modal contents if doc_bytes is present
@@ -470,8 +475,11 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             Answer the user's question or analyze the provided content based on the site context.
             
             IMPORTANT: You are in READ-ONLY mode. You cannot modify files. 
-            If the user is asking for a change or update, you must inform them that you misclassified their intent 
-            and ask them to rephrase their request more clearly as a modification.
+            
+            If the user is asking for a change or update:
+            1. Inform them that you are in READ-ONLY mode.
+            2. Provide a specific, optimized prompt they can use once they switch to EDIT mode to achieve their goal.
+            3. The suggested prompt should incorporate the findings of your current analysis and the relevant timestamps.
             
             Question: {message}
             Git Context: {git_context}
