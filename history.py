@@ -79,8 +79,12 @@ class ChatHistoryManager:
             # Sort by timestamp (handling potential None values)
             history.sort(key=lambda x: x["timestamp"] if x["timestamp"] else 0)
             
-            # Return only role and content
-            return [{"role": h["role"], "content": h["content"]} for h in history]
+            # Return role, content, and timestamp
+            return [{
+                "role": h["role"], 
+                "content": h["content"], 
+                "timestamp": h["timestamp"].isoformat() if hasattr(h["timestamp"], "isoformat") else str(h["timestamp"])
+            } for h in history]
         except Exception as e:
             print(f"Error retrieving from Firestore: {e}")
             return []

@@ -7,6 +7,7 @@ import PyPDF2
 import docx
 import google.auth
 import google.auth.transport.requests
+from datetime import datetime
 from pathlib import Path
 from google import genai
 from google.genai import types
@@ -76,6 +77,18 @@ def get_safe_path(repo_path: str, file_path: str) -> Path:
         raise ValueError(f"Path escape detected: {file_path}")
         
     return final_path
+
+def format_ts(ts_str: Optional[str] = None) -> str:
+    """Formats an ISO timestamp string for the UI."""
+    if not ts_str:
+        return datetime.now().strftime("%I:%M %p")
+    try:
+        # Handle Firestore ISO format
+        clean_ts = ts_str.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(clean_ts)
+        return dt.strftime("%I:%M %p")
+    except:
+        return "Just now"
 
 def get_gemini_response(prompt: str, model_name: str = "gemini-3-flash-preview", contents: list = None) -> str:
     try:
@@ -147,7 +160,7 @@ async def rollback_prod_worker(user: str, message_id: str):
 
         # Get history for context
         history = await chat_manager.get_recent_messages(user, limit=5)
-        history_context = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+        history_context = "\n".join([f"[{m.get('timestamp', 'Unknown')}] {m['role'].upper()}: {m['content']}" for m in history])
 
         # Generate follow-up question
         prompt = f"""
@@ -172,7 +185,7 @@ async def rollback_prod_worker(user: str, message_id: str):
             <div class="markdown-content text-navy text-sm">
                 {question}
             </div>
-            <span class="text-[10px] text-navy/50 mt-2 block">System • Just now</span>
+            <span class="text-[10px] text-navy/50 mt-2 block">System • {format_ts()}</span>
         </div>
         """
         await chat_manager.update_message(message_id, final_html)
@@ -195,7 +208,7 @@ async def rollback_dev_worker(user: str, message_id: str):
 
         # Get history for context
         history = await chat_manager.get_recent_messages(user, limit=5)
-        history_context = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+        history_context = "\n".join([f"[{m.get('timestamp', 'Unknown')}] {m['role'].upper()}: {m['content']}" for m in history])
 
         # Generate follow-up question
         prompt = f"""
@@ -220,7 +233,7 @@ async def rollback_dev_worker(user: str, message_id: str):
             <div class="markdown-content text-navy text-sm">
                 {question}
             </div>
-            <span class="text-[10px] text-navy/50 mt-2 block">System • Just now</span>
+            <span class="text-[10px] text-navy/50 mt-2 block">System • {format_ts()}</span>
         </div>
         """
         await chat_manager.update_message(message_id, final_html)
@@ -305,6 +318,8 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             2. If the user asks a question about the site, board, or asks for an ANALYSIS of an uploaded image/document without requesting a specific website change, intent is 'READ'.
             3. CRITICAL: If intent is 'WRITE' AND Git Context shows 'Pending on dev' is NOT 'None', you must still classify as 'WRITE' but set 'target_file' to 'LOCKED'.
             4. Respond ONLY with a JSON object: {{"intent": "READ"|"WRITE", "complexity": 1-10, "target_file": "path/to/file"}}
+            
+            Note: Use the timestamps in the Discussion History to prioritize the most recent user intent.
             """
             
             triage_raw = get_gemini_response(triage_prompt, "gemini-3.1-flash-lite")
@@ -378,6 +393,8 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                     "new_content": "FULL file content here",
                     "summary": "Brief explanation of change"
                 }}
+                
+                Note: Use the timestamps in the Discussion History to prioritize the most recent instructions.
                 """
                 
                 # Build multi-modal contents if doc_bytes is present
@@ -463,6 +480,8 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             {file_list_str}
             {extra_context}
             Context: {history_context}
+            
+            Note: Use the timestamps in the Context to prioritize the most recent information and ignore outdated requests.
             """
             
             if doc_bytes:
@@ -487,7 +506,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
                 <div class="markdown-content text-navy">
                     {answer}
                 </div>
-                <span class="text-[10px] text-navy/50 mt-2 block">Agent • Just now</span>
+                <span class="text-[10px] text-navy/50 mt-2 block">Agent • {format_ts()}</span>
             </div>
             """
             await chat_manager.update_message(message_id, final_html)
@@ -504,7 +523,7 @@ async def cancel_plan(user: str = Depends(get_iap_user)):
         return HTMLResponse(content="""
         <div class='message-agent p-4 glass rounded-2xl rounded-tl-none max-w-[85%]'>
             <p class='text-xs italic text-navy/60'>Update plan discarded. No changes were made to the site. Is there anything else I can help you with?</p>
-            <span class="text-[10px] text-navy/50 mt-2 block">System • Just now</span>
+            <span class="text-[10px] text-navy/50 mt-2 block">System • {format_ts()}</span>
         </div>
         """)
     finally:
@@ -540,7 +559,7 @@ async def chat_endpoint(
 
     # Retrieve persistent chat history
     history = await chat_manager.get_recent_messages(user, limit=10)
-    history_context = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
+    history_context = "\n".join([f"[{m.get('timestamp', 'Unknown')}] {m['role'].upper()}: {m['content']}" for m in history])
 
     doc_bytes = parse_document(file) if file and file.filename else None
     await chat_manager.save_message(user, "user", message)
@@ -551,7 +570,7 @@ async def chat_endpoint(
     <div class="flex justify-end mb-6">
         <div class="max-w-[85%] bg-navy text-white p-4 rounded-2xl rounded-tr-none shadow-lg">
             <p class="text-sm leading-relaxed">{message}</p>
-            <span class="text-[10px] text-white/50 mt-2 block text-right">You • Just now</span>
+            <span class="text-[10px] text-white/50 mt-2 block text-right">You • {format_ts()}</span>
         </div>
     </div>
     <div class="flex justify-start" id="status-container-{message_id}" hx-get="/agent/status/{message_id}" hx-trigger="every 2s" hx-swap="outerHTML">
