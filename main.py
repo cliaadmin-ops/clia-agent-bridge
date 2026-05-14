@@ -77,7 +77,7 @@ def get_safe_path(repo_path: str, file_path: str) -> Path:
         
     return final_path
 
-def get_gemini_response(prompt: str, model_name: str = "gemini-3.1-flash-lite", contents: list = None) -> str:
+def get_gemini_response(prompt: str, model_name: str = "gemini-3-flash-preview", contents: list = None) -> str:
     try:
         if contents:
             response = client.models.generate_content(model=model_name, contents=contents)
@@ -280,7 +280,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             complexity = 1
             file_to_change = None
 
-        model_to_use = "gemini-3.1-flash-lite" if complexity <= 3 else "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
+        model_to_use = "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
         
         if intent == "WRITE" or doc_bytes:
             try:
