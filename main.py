@@ -237,6 +237,13 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             await chat_manager.update_message(message_id, "Agent Busy: Another task is in progress.")
             return
 
+        await chat_manager.update_message(message_id, "Syncing repository...")
+        git_ops.sync_main()
+        
+        # Check for pending changes on dev
+        diff_stat = git_ops.repo.git.diff('main..origin/dev', '--stat')
+        git_context = f"Baseline: main. Pending on dev: {diff_stat if diff_stat else 'None'}"
+
         await chat_manager.update_message(message_id, "Analyzing request...")
         
         # Load manifest for triage context
@@ -250,13 +257,15 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
         You are the CLIA Content Steward. 
         Analyze the user's intent and the site manifest to determine if this is a READ (question) or WRITE (modification) request.
         
+        Git Context: {git_context}
         Site Manifest: {manifest_content}
         User Message: {message}
         
         Rules:
         1. If the user asks to change, update, increment, fix, or modify ANY content (including version numbers, text, or data), intent MUST be 'WRITE'.
         2. If the user asks a question about the site or board, intent is 'READ'.
-        3. Respond ONLY with a JSON object: {{"intent": "READ"|"WRITE", "complexity": 1-10, "target_file": "path/to/file"}}
+        3. CRITICAL: If intent is 'WRITE' AND Git Context shows 'Pending on dev' is NOT 'None', you must still classify as 'WRITE' but set 'target_file' to 'LOCKED'.
+        4. Respond ONLY with a JSON object: {{"intent": "READ"|"WRITE", "complexity": 1-10, "target_file": "path/to/file"}}
         """
         
         triage_raw = get_gemini_response(triage_prompt, "gemini-3.1-flash-lite")
@@ -275,12 +284,28 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
         
         if intent == "WRITE" or doc_bytes:
             try:
-                # 0. Sync Main and Get Context
-                await chat_manager.update_message(message_id, "Syncing repository...")
-                git_ops.sync_main()
-                
-                diff_stat = git_ops.repo.git.diff('main..origin/dev', '--stat')
-                git_context = f"Baseline: main. Pending on dev: {diff_stat if diff_stat else 'None'}"
+                if file_to_change == "LOCKED":
+                    lock_html = f"""
+                    <div class="message-agent p-4 glass border-l-4 border-sunset rounded-xl max-w-[85%]">
+                        <div class="flex items-center space-x-2 mb-2 text-sunset">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                            <p class="text-sm font-bold uppercase tracking-wider">Workflow Locked</p>
+                        </div>
+                        <div class="markdown-content text-navy text-sm mb-4">
+                            I see there are already pending changes on the **dev** branch that haven't been pushed to production yet. 
+                            
+                            To prevent conflicts and ensure a stable deployment, I can only handle one set of changes at a time. You must either:
+                            1. **Approve & Push** the current changes to production.
+                            2. **Undo Last** to clear the dev branch and start fresh.
+                        </div>
+                        <div class="flex flex-col space-y-2">
+                            <a href="{git_ops.get_dev_url()}" target="_blank" class="w-full bg-teal hover:bg-teal-700 text-white text-center text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-md no-underline">Review Pending Changes</a>
+                        </div>
+                    </div>
+                    """
+                    await chat_manager.update_message(message_id, lock_html)
+                    await chat_manager.release_lock(user)
+                    return
 
                 await chat_manager.update_message(message_id, "Preparing staging plan...")
 
@@ -372,6 +397,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             and ask them to rephrase their request more clearly as a modification.
             
             Question: {message}
+            Git Context: {git_context}
             Context: {history_context}
             """
             answer = get_gemini_response(query_prompt, model_to_use)

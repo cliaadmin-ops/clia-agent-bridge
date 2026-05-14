@@ -26,5 +26,12 @@
 - **Path Resolution Debugging:** If the agent fails to find a file, verify the path in `site-manifest.json`. The agent uses `get_safe_path` to force all operations into the `public/` folder.
 - **Monitoring Logs:** Check Google Cloud Run logs for the `clia-agent-bridge` service for troubleshooting.
 
+## Advanced Site Changes & Guidelines
+- **Sub-page Consistency:** When creating or updating sub-pages (e.g., `about-clia.html`, `board-members.html`), ensure they use the shared `public/includes/header.html` and `public/includes/footer.html`.
+- **Thematic Alignment:** All new components must adhere to the "Lake Vibe" aesthetic (Navy, Teal, Slate, Sunset Orange). Use CSS variables defined in `styles.css` (e.g., `--brand`, `--accent`, `--radius`).
+- **Dynamic Data:** Prefer structured JSON (in `public/data/`) over hardcoded HTML for lists (e.g., Board Members, Species). Use the `fetch()` API with robust error handling to render this data.
+- **Navigation Logic:** The "Smart Navigation" script in `header.html` must be maintained to handle anchor links correctly across different page depths.
+- **Dropdown Menus:** New navigation items should be integrated into the dropdown logic in `header.html` to maintain a clean, professional UI.
+
 ## Versioning
-- Current Stable: `v1.4.0-stable` (Unified Path Resolution)
+- Current Stable: `v1.8.2-stable` (Dual-Branch Rollbacks & Lake Vibe UI)

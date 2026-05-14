@@ -41,3 +41,12 @@ When a user requests a change:
 - **Website Repo:** Content manifest, site structure.
 - **Bridge Repo:** Agent logic, Git-Ops workflow, API endpoints.
 - **Protocol:** Any change to the website structure (e.g., new editable JSON file) must be reflected in `site-manifest.json` AND documented in the Bridge's `docs/` folder.
+
+## Operational Constraints (v1.8.2-stable)
+- **Single-Action Lock:** The agent currently supports only one in-process Git action at a time. A "change" (Stage to Dev) must be either finalized (Push to Production) or reverted (Undo Last) before a new, independent change can be initiated.
+- **State Dependency:** Attempting to stack multiple changes on the `dev` branch without clearing the previous state will result in a workflow break. The agent is programmed to warn users of this constraint.
+
+## Future Roadmap: Advanced Site Changes
+- **Multi-Step Workflows:** Transitioning to a state machine that supports queuing multiple independent tasks.
+- **Branch Isolation:** Moving from a shared `dev` branch to per-task feature branches to allow concurrent development.
+- **Enhanced Validation:** Implementing automated visual regression testing (Success Gating) before allowing a push to production.
