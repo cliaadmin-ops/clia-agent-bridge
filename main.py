@@ -255,7 +255,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
 
         triage_prompt = f"""
         You are the CLIA Content Steward. 
-        Analyze the user's intent and the site manifest to determine if this is a READ (question) or WRITE (modification) request.
+        Analyze the user's intent and the site manifest to determine if this is a READ (question/analysis) or WRITE (modification) request.
         
         Git Context: {git_context}
         Site Manifest: {manifest_content}
@@ -263,7 +263,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
         
         Rules:
         1. If the user asks to change, update, increment, fix, or modify ANY content (including version numbers, text, or data), intent MUST be 'WRITE'.
-        2. If the user asks a question about the site or board, intent is 'READ'.
+        2. If the user asks a question about the site, board, or asks for an ANALYSIS of an uploaded image/document without requesting a specific website change, intent is 'READ'.
         3. CRITICAL: If intent is 'WRITE' AND Git Context shows 'Pending on dev' is NOT 'None', you must still classify as 'WRITE' but set 'target_file' to 'LOCKED'.
         4. Respond ONLY with a JSON object: {{"intent": "READ"|"WRITE", "complexity": 1-10, "target_file": "path/to/file"}}
         """
@@ -410,7 +410,7 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             # READ Logic
             query_prompt = f"""
             You are the CLIA Content Steward. 
-            Answer the user's question based on the site context.
+            Answer the user's question or analyze the provided content based on the site context.
             
             IMPORTANT: You are in READ-ONLY mode. You cannot modify files. 
             If the user is asking for a change or update, you must inform them that you misclassified their intent 
@@ -420,7 +420,23 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
             Git Context: {git_context}
             Context: {history_context}
             """
-            answer = get_gemini_response(query_prompt, model_to_use)
+            
+            if doc_bytes:
+                print(f"DEBUG: Sending multi-modal READ request to Gemini ({len(doc_bytes)} bytes)")
+                mime_type = "image/jpeg" # Default
+                contents = [
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_text(text=query_prompt),
+                            types.Part.from_bytes(data=doc_bytes, mime_type=mime_type)
+                        ]
+                    )
+                ]
+                answer = get_gemini_response(None, model_to_use, contents=contents)
+            else:
+                answer = get_gemini_response(query_prompt, model_to_use)
+
             final_html = f"""
             <div class="message-agent p-4 glass rounded-2xl rounded-tl-none max-w-[85%]">
                 <div class="text-[8px] text-navy/30 mb-1 uppercase font-bold tracking-widest">{model_to_use}</div>
