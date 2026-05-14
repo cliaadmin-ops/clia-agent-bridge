@@ -230,7 +230,7 @@ async def rollback_dev_worker(user: str, message_id: str):
     finally:
         await chat_manager.release_lock(user)
 
-async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], message_id: str, history_context: str):
+async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], message_id: str, history_context: str, mode: str = "discussion"):
     try:
         # Acquire Persistent Lock
         if not await chat_manager.acquire_lock(user):
@@ -244,41 +244,47 @@ async def chat_worker(user: str, message: str, doc_bytes: Optional[bytes], messa
         diff_stat = git_ops.repo.git.diff('main..origin/dev', '--stat')
         git_context = f"Baseline: main. Pending on dev: {diff_stat if diff_stat else 'None'}"
 
-        await chat_manager.update_message(message_id, "Analyzing request...")
-        
-        # Load manifest for triage context
-        manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
-        manifest_content = "{}"
-        if os.path.exists(manifest_path):
-            with open(manifest_path, 'r') as f:
-                manifest_content = f.read()
-
-        triage_prompt = f"""
-        You are the CLIA Content Steward. 
-        Analyze the user's intent and the site manifest to determine if this is a READ (question/analysis) or WRITE (modification) request.
-        
-        Git Context: {git_context}
-        Site Manifest: {manifest_content}
-        User Message: {message}
-        
-        Rules:
-        1. If the user asks to change, update, increment, fix, or modify ANY content (including version numbers, text, or data), intent MUST be 'WRITE'.
-        2. If the user asks a question about the site, board, or asks for an ANALYSIS of an uploaded image/document without requesting a specific website change, intent is 'READ'.
-        3. CRITICAL: If intent is 'WRITE' AND Git Context shows 'Pending on dev' is NOT 'None', you must still classify as 'WRITE' but set 'target_file' to 'LOCKED'.
-        4. Respond ONLY with a JSON object: {{"intent": "READ"|"WRITE", "complexity": 1-10, "target_file": "path/to/file"}}
-        """
-        
-        triage_raw = get_gemini_response(triage_prompt, "gemini-3.1-flash-lite")
-        try:
-            json_str = triage_raw.strip('`').replace('json\n', '')
-            triage_json = json.loads(json_str)
-            intent = triage_json.get("intent", "READ")
-            complexity = triage_json.get("complexity", 1)
-            file_to_change = triage_json.get("target_file")
-        except:
+        if mode == "discussion":
             intent = "READ"
-            complexity = 1
+            complexity = 3
             file_to_change = None
+            await chat_manager.update_message(message_id, "Thinking (Plan Mode)...")
+        else:
+            await chat_manager.update_message(message_id, "Analyzing request (Edit Mode)...")
+            
+            # Load manifest for triage context
+            manifest_path = os.path.join(REPO_PATH, "public", "site-manifest.json")
+            manifest_content = "{}"
+            if os.path.exists(manifest_path):
+                with open(manifest_path, 'r') as f:
+                    manifest_content = f.read()
+
+            triage_prompt = f"""
+            You are the CLIA Content Steward. 
+            Analyze the user's intent and the site manifest to determine if this is a READ (question/analysis) or WRITE (modification) request.
+            
+            Git Context: {git_context}
+            Site Manifest: {manifest_content}
+            User Message: {message}
+            
+            Rules:
+            1. If the user asks to change, update, increment, fix, or modify ANY content (including version numbers, text, or data), intent MUST be 'WRITE'.
+            2. If the user asks a question about the site, board, or asks for an ANALYSIS of an uploaded image/document without requesting a specific website change, intent is 'READ'.
+            3. CRITICAL: If intent is 'WRITE' AND Git Context shows 'Pending on dev' is NOT 'None', you must still classify as 'WRITE' but set 'target_file' to 'LOCKED'.
+            4. Respond ONLY with a JSON object: {{"intent": "READ"|"WRITE", "complexity": 1-10, "target_file": "path/to/file"}}
+            """
+            
+            triage_raw = get_gemini_response(triage_prompt, "gemini-3.1-flash-lite")
+            try:
+                json_str = triage_raw.strip('`').replace('json\n', '')
+                triage_json = json.loads(json_str)
+                intent = triage_json.get("intent", "READ")
+                complexity = triage_json.get("complexity", 1)
+                file_to_change = triage_json.get("target_file")
+            except:
+                intent = "READ"
+                complexity = 1
+                file_to_change = None
 
         model_to_use = "gemini-3-flash-preview" if complexity <= 7 else "gemini-3.1-pro-preview"
         
@@ -471,6 +477,7 @@ async def chat_endpoint(
     request: Request,
     background_tasks: BackgroundTasks,
     message: str = Form(...),
+    mode: str = Form("discussion"),
     file: Optional[UploadFile] = File(None),
     user: str = Depends(get_iap_user)
 ):
@@ -500,7 +507,7 @@ async def chat_endpoint(
     doc_bytes = parse_document(file) if file and file.filename else None
     await chat_manager.save_message(user, "user", message)
     message_id = await chat_manager.save_message(user, "assistant", "Processing...")
-    background_tasks.add_task(chat_worker, user, message, doc_bytes, message_id, history_context)
+    background_tasks.add_task(chat_worker, user, message, doc_bytes, message_id, history_context, mode)
     
     return HTMLResponse(content=f"""
     <div class="flex justify-end mb-6">
